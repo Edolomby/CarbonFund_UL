@@ -67,3 +67,8 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+
+# other files
+/boost_1_90_0/
+CMakeUserPresets.json
