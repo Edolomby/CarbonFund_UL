@@ -7,10 +7,12 @@ project(CarbonFund_UL VERSION 0.1.0 LANGUAGES CXX)
 # ==============================================================================
 # 1. COMPILER CONFIGURATION
 # ==============================================================================
+
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(CARBONFUND_ENABLE_OPENMP "Enable OpenMP support" ON)
+
 # ==============================================================================
 # 2. DEPENDENCIES
 # ==============================================================================
@@ -59,18 +61,49 @@ if(CARBONFUND_ENABLE_OPENMP)
 endif()
 
 
-# ==============================================================================
-# 4. DEPENDENCY COMPILATION CHECK
-# ==============================================================================
-
+#DEPENDENCY COMPILATION CHECK
 add_executable(check_dependencies examples/check_dependencies.cpp)
 
 target_link_libraries(check_dependencies PRIVATE
     CarbonFund::carbonfund
 )
 
+
 # ==============================================================================
-# 4. STATUS REPORT
+# 4. Automated tests
+# ==============================================================================
+
+include(CTest)
+
+if(BUILD_TESTING)
+    add_executable(test_carbon_models tests/test_carbon_models.cpp)
+    target_link_libraries(test_carbon_models PRIVATE CarbonFund::carbonfund)
+    add_test(NAME carbon_models COMMAND test_carbon_models)
+    
+    add_executable(test_simulation_rng tests/test_simulation_rng.cpp)
+    target_link_libraries(test_simulation_rng PRIVATE CarbonFund::carbonfund)
+    add_test(NAME simulation_rng COMMAND test_simulation_rng)
+    
+    add_executable(test_carbon_allocation tests/test_carbon_allocation.cpp)
+    target_link_libraries(test_carbon_allocation PRIVATE CarbonFund::carbonfund)
+    add_test(NAME carbon_allocation COMMAND test_carbon_allocation)
+    
+    add_executable(test_gompertz_makeham tests/test_gompertz_makeham.cpp)
+    target_link_libraries(test_gompertz_makeham PRIVATE CarbonFund::carbonfund)
+    add_test(NAME gompertz_makeham COMMAND test_gompertz_makeham)
+    
+    add_executable(test_cohorts tests/test_cohorts.cpp)
+    target_link_libraries(test_cohorts PRIVATE CarbonFund::carbonfund)
+    add_test(NAME cohorts COMMAND test_cohorts)
+    
+    add_executable(test_petiei_mortality_weights tests/test_petiei_mortality_weights.cpp)
+    target_link_libraries(test_petiei_mortality_weights PRIVATE carbonfund)
+    add_test(NAME petiei_mortality_weights COMMAND test_petiei_mortality_weights)
+endif()
+
+
+# ==============================================================================
+# 5. STATUS REPORT
 # ==============================================================================
 
 message(STATUS "---------------------------------------------------")
