@@ -19,24 +19,14 @@ option(CARBONFUND_ENABLE_OPENMP "Enable OpenMP support" ON)
 
 find_package(Eigen3 3.4 REQUIRED NO_MODULE)
 
-# Prefer a local Boost bundle unless a root was explicitly supplied.
-# An external directory can be supplied with -DBOOST_ROOT=/path/to/boost.
-if(NOT DEFINED BOOST_ROOT
-   AND NOT DEFINED Boost_ROOT
-   AND NOT DEFINED ENV{BOOST_ROOT}
-   AND NOT DEFINED ENV{Boost_ROOT}
-   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/boost_1_90_0")
-    set(BOOST_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/boost_1_90_0")
-endif()
-
-find_package(Boost 1.88.0 REQUIRED)
+find_package(Boost 1.88.0 CONFIG REQUIRED)
 
 if(CARBONFUND_ENABLE_OPENMP)
     find_package(OpenMP REQUIRED COMPONENTS CXX)
 endif()
 
 # ==============================================================================
-# 3. LIBRARY TARGET 
+# 3. LIBRARY TARGET
 # ==============================================================================
 
 # Header-only library
@@ -55,18 +45,16 @@ target_link_libraries(carbonfund INTERFACE
 )
 
 if(CARBONFUND_ENABLE_OPENMP)
-    target_link_libraries(carbonfund INTERFACE
-        OpenMP::OpenMP_CXX
-    )
+    target_link_libraries(carbonfund INTERFACE OpenMP::OpenMP_CXX)
 endif()
 
 
 #DEPENDENCY COMPILATION CHECK
 add_executable(check_dependencies examples/check_dependencies.cpp)
+target_link_libraries(check_dependencies PRIVATE CarbonFund::carbonfund)
 
-target_link_libraries(check_dependencies PRIVATE
-    CarbonFund::carbonfund
-)
+add_executable(example_petiei_monte_carlo examples/petiei_monte_carlo.cpp)
+target_link_libraries(example_petiei_monte_carlo PRIVATE CarbonFund::carbonfund)
 
 
 # ==============================================================================
@@ -79,26 +67,34 @@ if(BUILD_TESTING)
     add_executable(test_carbon_models tests/test_carbon_models.cpp)
     target_link_libraries(test_carbon_models PRIVATE CarbonFund::carbonfund)
     add_test(NAME carbon_models COMMAND test_carbon_models)
-    
+
     add_executable(test_simulation_rng tests/test_simulation_rng.cpp)
     target_link_libraries(test_simulation_rng PRIVATE CarbonFund::carbonfund)
     add_test(NAME simulation_rng COMMAND test_simulation_rng)
-    
+
     add_executable(test_carbon_allocation tests/test_carbon_allocation.cpp)
     target_link_libraries(test_carbon_allocation PRIVATE CarbonFund::carbonfund)
     add_test(NAME carbon_allocation COMMAND test_carbon_allocation)
-    
+
     add_executable(test_gompertz_makeham tests/test_gompertz_makeham.cpp)
     target_link_libraries(test_gompertz_makeham PRIVATE CarbonFund::carbonfund)
     add_test(NAME gompertz_makeham COMMAND test_gompertz_makeham)
-    
+
     add_executable(test_cohorts tests/test_cohorts.cpp)
     target_link_libraries(test_cohorts PRIVATE CarbonFund::carbonfund)
     add_test(NAME cohorts COMMAND test_cohorts)
-    
+
     add_executable(test_petiei_mortality_weights tests/test_petiei_mortality_weights.cpp)
-    target_link_libraries(test_petiei_mortality_weights PRIVATE carbonfund)
+    target_link_libraries(test_petiei_mortality_weights PRIVATE CarbonFund::carbonfund)
     add_test(NAME petiei_mortality_weights COMMAND test_petiei_mortality_weights)
+
+    add_executable(test_min_max_payoff tests/test_min_max_payoff.cpp)
+    target_link_libraries(test_min_max_payoff PRIVATE CarbonFund::carbonfund)
+    add_test(NAME min_max_payoff COMMAND test_min_max_payoff)
+
+    add_executable(test_petiei_monte_carlo tests/test_petiei_monte_carlo.cpp)
+    target_link_libraries(test_petiei_monte_carlo PRIVATE CarbonFund::carbonfund)
+    add_test(NAME petiei_monte_carlo COMMAND test_petiei_monte_carlo)
 endif()
 
 
