@@ -252,8 +252,9 @@ void check_tails_and_narrow_guarantees()
 
     require_close(
         narrow.delta, expected_delta,
-        "Adjacent guarantee values lost their small delta.",
-        1e-13L, 0.0L);
+        "Adjacent-guarantee delta exceeds the absolute roundoff tolerance.",
+        0.0L,
+        static_cast<long double>(std::numeric_limits<double>::epsilon()));
 
     // Check both sides of the transition to the local density expansion.
     for (double midpoint : {-3.0, 0.0, 2.0}) {

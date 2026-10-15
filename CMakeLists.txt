@@ -56,6 +56,12 @@ target_link_libraries(check_dependencies PRIVATE CarbonFund::carbonfund)
 add_executable(example_petiei_monte_carlo examples/petiei_monte_carlo.cpp)
 target_link_libraries(example_petiei_monte_carlo PRIVATE CarbonFund::carbonfund)
 
+add_executable(benchmark_petiei_antithetic benchmarks/benchmark_petiei_antithetic.cpp)
+target_link_libraries(benchmark_petiei_antithetic PRIVATE CarbonFund::carbonfund)
+
+add_executable(benchmark_petiei_variance_reduction benchmarks/benchmark_petiei_variance_reduction.cpp)
+target_link_libraries(benchmark_petiei_variance_reduction PRIVATE CarbonFund::carbonfund)
+
 
 # ==============================================================================
 # 4. Automated tests
@@ -95,6 +101,10 @@ if(BUILD_TESTING)
     add_executable(test_petiei_monte_carlo tests/test_petiei_monte_carlo.cpp)
     target_link_libraries(test_petiei_monte_carlo PRIVATE CarbonFund::carbonfund)
     add_test(NAME petiei_monte_carlo COMMAND test_petiei_monte_carlo)
+    
+    add_executable(test_petiei_estimators tests/test_petiei_estimators.cpp)
+    target_link_libraries(test_petiei_estimators PRIVATE CarbonFund::carbonfund)
+    add_test(NAME petiei_estimators COMMAND test_petiei_estimators)
 endif()
 
 

@@ -12,7 +12,7 @@ The current library prices three contract types:
 
 Benefits use a fund payoff with a minimum guarantee and a maximum guarantee. The investment allocation depends on four carbon factors.
 
-The implemented pricer is serial conditional Monte Carlo. It returns portfolio prices, fund deltas, sample variances and standard errors. The outer simulation of policyholder deaths, hedge rebalancing and trading gains is a subsequent layer; it is not implemented in this pricer.
+The serial pricer supports standard Monte Carlo and conditional Monte Carlo, each with independent or antithetic sampling. Conditional Monte Carlo with antithetic carbon trajectories is the default. Mortality is integrated analytically in both estimators. It returns portfolio prices, fund deltas, sample variances and standard errors. The outer simulation of policyholder deaths, hedge rebalancing and trading gains is a subsequent layer; it is not implemented in this pricer.
 
 ## Installation and build
 
@@ -94,12 +94,12 @@ The example uses one age-60 cohort of total notional 100,000 for each contract t
 
 The mortality parameters are annual quantities. `gompertz_growth_rate` is the reciprocal of the scale used in the earlier Gompertz-Makeham parameterization.
 
-With the validated configuration, the output is:
+With the validated configuration and the default antithetic sampling, the output is:
 
 ```text
-PE: price=87258.346513, price standard error=1.187195, delta=30281.933712, delta standard error=18.923561
-TI: price=10509.401796, price standard error=0.058239, delta=2600.719298, delta standard error=1.411592
-EI: price=97767.748309, price standard error=1.242668, delta=32882.653011, delta standard error=20.219508
+PE: price=87255.417096, price standard error=0.161860, delta=30234.971655, delta standard error=2.487991
+TI: price=10509.258869, price standard error=0.007455, delta=2520.084926, delta standard error=0.167233
+EI: price=97764.675965, price standard error=0.168755, delta=32755.056581, delta standard error=2.635167
 ```
 
 These are results for the illustrative inputs above. Last digits can differ across compiler and dependency versions.
@@ -111,16 +111,18 @@ Each contract estimate contains a `price` and a `delta`, both with these fields:
 | Field | Meaning |
 |---|---|
 | `mean` | Estimated discounted portfolio price or its fund delta. |
-| `sample_variance` | Unbiased variance of one conditional path contribution. |
-| `standard_error` | Estimated Monte Carlo uncertainty of the mean: `sqrt(sample_variance / simulations)`. |
+| `sample_variance` | Unbiased variance of one independent observation: a pair mean in antithetic mode, or one path contribution in independent mode. |
+| `standard_error` | Estimated Monte Carlo uncertainty of the mean: `sqrt(sample_variance / result.independent_samples)`. |
 
-For example, the PE portfolio price is approximately 87,258.35. Its delta is
+The result also reports `simulations`, the actual number of trajectories, and `independent_samples`, the number of observations used in the statistics. Example 1 evaluates 1,000 trajectories grouped into 500 independent pairs.
+
+For example, the PE portfolio price is approximately 87,255.42. Its delta is
 
 $$
 \Delta_{PE}=\frac{\partial\,\text{price}_{PE}}{\partial X_0}.
 $$
 
-A small increase of the current fund value from 1.00 to 1.01 changes the PE price by approximately `30281.933712 * 0.01 = 302.82`, with guarantees and other valuation inputs held fixed. The derivative is with respect to the fund normalization used in `fund_value`; hedge quantities must use that same normalization.
+A small increase of the current fund value from 1.00 to 1.01 changes the PE price by approximately `30234.971655 * 0.01 = 302.35`, with guarantees and other valuation inputs held fixed. The derivative is with respect to the fund normalization used in `fund_value`; hedge quantities must use that same normalization.
 
 Use the values directly in an application:
 
@@ -132,11 +134,11 @@ const double ei_price_se = result.endowment_insurance.price.standard_error;
 
 The PETIEI prices already include mortality, aggregate notional and discounting. The PETIEI deltas already include those same weights.
 
-In this example, the identical cohorts and EI death-benefit fraction of one imply `EI price = PE price + TI price`, and likewise for delta. EI variance is calculated from the combined benefit on each path, retaining the covariance between its death and maturity contributions.
+In this example, the identical cohorts and EI death-benefit fraction of one imply `EI price = PE price + TI price`, and likewise for delta. EI combines death and maturity benefits on each trajectory, then averages complete antithetic contributions before estimating variance. This retains the covariance between both benefits and between the paired trajectories.
 
 Standard error measures Monte Carlo sampling uncertainty. Time-grid error in carbon/variance integration and mortality quadrature is separate. Increasing the path count by a factor of four should approximately halve standard error; refining the time grid addresses discretization error.
 
-Integrated fund variance describes the conditional financial distribution along one carbon path. `price.sample_variance` and `delta.sample_variance` describe variation of the conditional contributions across many carbon paths; they are different quantities.
+Integrated fund variance describes the conditional financial distribution along one carbon path. `price.sample_variance` and `delta.sample_variance` describe variation across independent observations of the Monte Carlo estimator; they are different quantities.
 
 ## Example 2: several cohorts, or one contract type
 
@@ -282,11 +284,11 @@ $$
 L(t)=L_0\exp(g_L t),\qquad U(t)=U_0\exp(g_U t).
 $$
 
-Every future payment requires $0\leq L(t_i)<U(t_i)$. Equal guarantees are allowed at the current endpoint only when they become strictly ordered at every future grid date, as in Example 1. The current death-quadrature endpoint preserves the original delta convention of one at either boundary. The future zero-variance kernel uses half the risk-free growth as its boundary delta convention.
+Every future payment requires $0\leq L(t_i)<U(t_i)$. Equal guarantees are allowed at the current endpoint only when they become strictly ordered at every future grid date, as in Example 1. At the current death-quadrature endpoint, coincident guarantees give a constant payoff with delta zero. At a single kink the symmetric derivative is one half. The future zero-variance kernel likewise uses half the risk-free growth at a single boundary. This corrects the earlier routine's endpoint delta of one; prices and sample variances are unaffected.
 
 ### Simulate carbon and integrate fund variance
 
-For each path, `evaluate()` resets carbon to the supplied current state, then advances it using four standard normal draws per step.
+For each antithetic pair, `evaluate()` resets both carbon vectors to the supplied current state. At each step it draws four standard normals once, then advances one trajectory with `Z` and the other with `-Z` using the selected carbon stepper. It uses no OU-specific reflection formula, so the same implementation works for OU, GeoOU and CIR NV. Independent mode advances a single trajectory per observation with freshly generated normal draws.
 
 The allocation solves
 
@@ -304,6 +306,8 @@ $$
 V_i=V_{i-1}+\frac{h}{2}(q_{i-1}+q_i),\qquad V_0=0.
 $$
 
+Each antithetic trajectory maintains its own integrated variance, allocation and benefit accumulators. Both conditional payoffs are evaluated separately before averaging; averaging carbon states or variances first would change the valuation.
+
 The simulated carbon state remains the output of its model. Its positive part is used only in the allocation penalty.
 
 ### Evaluate conditional benefits and accumulate statistics
@@ -318,7 +322,7 @@ Conditional on the carbon path, the fund is treated as lognormal with the prepar
 
 Independent Gompertz-Makeham mortality is handled through the prepared survival and death-density weights. Death payments are integrated on the time grid using trapezoidal quadrature. Mortality events are not sampled inside this valuation loop.
 
-The pricer combines maturity and death benefits into one contribution per contract per carbon path, then estimates their means and variances using Welford accumulation. Consequently, only carbon randomness contributes to this conditional estimator's Monte Carlo sampling error.
+The pricer combines maturity and death benefits into one contribution per contract per carbon path. In antithetic mode it averages the two complete price/delta contributions and adds one observation per pair to Welford's statistics. In independent mode each path contributes one observation. Consequently, only carbon randomness contributes to this conditional estimator's Monte Carlo sampling error.
 
 ## Current fund value and later valuations
 
@@ -371,7 +375,23 @@ The pricer requires strictly positive remaining maturity. Settlement at maturity
 
 Create a stream once and pass it by reference. Each `evaluate()` call advances its state. A freshly constructed stream with the same seed reproduces the same draws for the same implementation and inputs.
 
-`time_intervals` controls the grid size $N$. The second argument of `evaluate()` controls the path count $M$. At least two paths are required for an unbiased sample variance.
+`time_intervals` controls the grid size $N$. The second argument of `evaluate()` is the requested trajectory count $M$.
+
+Default antithetic mode uses `M / 2 + M % 2` pairs. An odd request rounds up to the next even actual trajectory count: a request of 1,001 evaluates 1,002 trajectories and produces 501 independent observations. At least three requested trajectories are required, rounded to four actual trajectories, so the estimator has at least two independent pairs.
+
+Independent mode evaluates exactly $M$ trajectories, permits odd counts, and requires at least two. Select the mode explicitly when comparing the methods:
+
+```cpp
+random::SimulationRng plain_rng{20261013};
+random::SimulationRng antithetic_rng{20261013};
+
+const auto plain = Pricer::evaluate(
+    prepared, 1000, plain_rng, pricing::PetieiSampling::independent);
+const auto antithetic = Pricer::evaluate(
+    prepared, 1000, antithetic_rng, pricing::PetieiSampling::antithetic);
+```
+
+Both calls above evaluate exactly 1,000 trajectories. They use 1,000 and 500 independent observations, respectively. With an odd requested count, the antithetic call performs one extra trajectory; use an even count for an equal-trajectory benchmark.
 
 For example, reuse the same prepared valuation with a larger path count:
 
@@ -382,6 +402,46 @@ const auto larger_result = Pricer::evaluate(prepared, 4000, larger_rng);
 
 Preparation is read-only during evaluation. Future parallel callers should each own a separate mutable RNG stream; the current inner path loop is serial.
 
+## Compare independent and antithetic sampling
+
+`examples/benchmark_petiei_antithetic.cpp` compares both sampling modes for OU, GeoOU and CIR NV, using the contract and allocation inputs from Example 1. It reports PE/TI/EI price and delta means, their standard errors, median process CPU time, and estimated efficiency.
+
+Build and run it in Release mode, after following the dependency setup in [INSTALLATION.md](INSTALLATION.md):
+
+```bash
+cmake -S . -B build/antithetic-release \
+    -DBoost_ROOT=/usr -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build/antithetic-release --target benchmark_petiei_antithetic
+./build/antithetic-release/benchmark_petiei_antithetic 20000 60 5 20261013
+```
+
+The optional positional arguments are requested trajectory count, grid intervals, timing repetitions and seed. The defaults are those shown above. At least three trajectories must be requested. For an odd request, the benchmark rounds the common budget up for both methods: a request of 1,001 compares both methods at exactly 1,002 trajectories. It prints both the requested and actual counts. Independent sampling outside this benchmark still uses exactly its requested count.
+
+Preparation and RNG construction are excluded from CPU timing. Both methods are warmed up, and their timing order alternates across repetitions. Repetition `i` uses seed `seed + i`; the reported means and standard errors come from the first seed, while CPU time is the median across repetitions.
+
+The efficiency column estimates `(plain CPU * plain SE^2) / (antithetic CPU * antithetic SE^2)`. Values above one favour antithetics at equal sampling precision. This is an estimate for the selected inputs and machine, not a guaranteed gain. Antithetics can help price and delta by different amounts, and the two estimates need not have identical means. Their shared random inputs also mean their estimation errors are correlated.
+
+## Standard versus conditional Monte Carlo
+
+Use separate carbon and financial streams for standard Monte Carlo:
+
+```cpp
+random::SimulationRng carbon_rng{20261015};
+random::SimulationRng financial_rng{20261016};
+const auto standard = Pricer::evaluate(
+    prepared, 1000000, carbon_rng, financial_rng,
+    pricing::PetieiEstimator::standard,
+    pricing::PetieiSampling::antithetic);
+```
+
+Standard antithetics negate both carbon and financial normals. The conditional estimator integrates the financial Gaussian and only reflects carbon normals. Both estimators use the same analytically prepared mortality weights.
+
+An optional `pricing::PetieiContract` argument selects `pure_endowment`, `term_insurance`, `endowment_insurance` or `all`. Unselected result fields are zero. Standalone PE uses the terminal scheme E3, with one financial normal per path or pair, and one payoff evaluation. TI/EI use the sequential fund scheme E2 by default. The optional `pricing::PetieiFundSampling::independent_marginals` instead samples each grid marginal with a fresh financial normal, matching the old TI/EI implementation; this changes estimator variance while preserving expected prices and deltas.
+
+The paper experiment is available through `benchmark_petiei_variance_reduction`. It compares all four estimator/sampling combinations at each maturity in Table E1. Its mortality inputs use the confirmed Makeham constant `0.0041959` and the exponent `(age + t - m) / b`.
+
+See [PAPER_VARIANCE_REDUCTION.md](PAPER_VARIANCE_REDUCTION.md) for the full parameters, measured results, confidence checks, differences from the original code and reproduction commands.
+
 ## Project components
 
 | Component | Responsibility |
@@ -391,7 +451,7 @@ Preparation is read-only during evaluation. Future parallel callers should each 
 | `portfolio/carbon_allocation_4d.hpp` | Carbon-sensitive allocation and instantaneous fund variance. |
 | `contracts/cohorts.hpp` | Aggregate living-policyholder rows and borrowed portfolio views. |
 | `mortality/gompertz_makeham.hpp` | Hazard, survival probabilities and death density. |
-| `pricing/min_max_payoff.hpp` | Conditional expected financial payoff and fund delta. |
+| `pricing/min_max_payoff.hpp` | Realized and conditional financial payoffs with fund delta. |
 | `pricing/petiei_mortality_weights.hpp` | Mortality, discounting, notionals and quadrature weights. |
 | `pricing/petiei_monte_carlo.hpp` | Serial PE/TI/EI pricing, deltas and Monte Carlo statistics. |
 
@@ -408,10 +468,10 @@ target_link_libraries(my_pricer PRIVATE CarbonFund::carbonfund)
 
 ## Numerical validation
 
-CTest currently contains eight tests: carbon models, RNG, allocation, Gompertz-Makeham mortality, cohorts, PETIEI mortality weights, min/max payoff and the serial PETIEI pricer.
+CTest currently contains nine tests: carbon models, RNG, allocation, Gompertz-Makeham mortality, cohorts, PETIEI mortality weights, min/max payoff, the PETIEI pricer and the standard/conditioned estimators.
 
-The pricing checks include fixed-draw comparisons against independent equations, delta finite differences with common random draws, sample variance and standard error, deterministic and zero-variance cases, model selection, RNG advancement and input validation.
+The pricing checks include fixed-draw comparisons against independent equations, delta finite differences with common random draws, sample variance and standard error, deterministic and zero-variance cases, model selection, RNG advancement and input validation. Antithetic checks independently reconstruct paired trajectories for all three carbon models and verify pair statistics, odd-count rounding and halved RNG consumption.
 
-All eight Debug tests and the portfolio example passed on the reported Ubuntu 26.04.1 / GCC 15.2 / system Boost 1.90.0 setup. Additional checks used GCC 13.3.0, CMake 3.28.3, Eigen 3.4.0 and Boost 1.90.0, including Release pricing tests.
+The earlier independent-sampling version passed all eight Debug tests and the portfolio example on the reported Ubuntu 26.04.1 / GCC 15.2 / system Boost 1.90.0 setup. The preceding antithetic version passed all eight Debug tests using GCC 13.3.0, CMake 3.28.3, Eigen 3.4.0 and Boost 1.90.0. Its Release pricing tests and equal-trajectory benchmark were also run. The standard/conditioned extension passes all nine Debug and Release tests; the additional checks cover scalar OU/GeoOU/CIR references, E2/E3 and independent marginal sampling, Gaussian quadrature of the conditional kernel, pair means/variances, stream consumption, contract selection, fixed-guarantee deltas and the corrected initial endpoint.
 
 Generated build files belong in `build/`; dependencies remain outside the repository.

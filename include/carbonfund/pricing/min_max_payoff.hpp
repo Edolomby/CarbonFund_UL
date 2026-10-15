@@ -1,6 +1,5 @@
 #pragma once
 
-#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <numbers>
@@ -56,39 +55,11 @@ inline double payoff_normal_survival(double x) noexcept
 inline double payoff_normal_interval(
     double lower,
     double upper,
-    double width) noexcept
+    double /* width */) noexcept
 {
-    const double midpoint = 0.5 * (lower + upper);
-
-    // Integrate the normal density over a narrow interval instead of
-    // subtracting almost equal CDFs. width is computed independently of
-    // upper-lower so that nearby guarantee values retain their precision.
-    if (width < 1e-2 / (1.0 + std::abs(midpoint))) {
-        constexpr double inverse_sqrt_two_pi =
-            std::numbers::inv_sqrtpi_v<double> /
-            std::numbers::sqrt2_v<double>;
-
-        const double scaled_midpoint = midpoint * width;
-        const double width_squared = width * width;
-        const double scaled_squared = scaled_midpoint * scaled_midpoint;
-
-        const double correction =
-            (scaled_squared - width_squared) / 24.0 +
-            (scaled_squared * scaled_squared -
-             6.0 * scaled_squared * width_squared +
-             3.0 * width_squared * width_squared) / 1920.0;
-
-        return inverse_sqrt_two_pi *
-               std::exp(-0.5 * midpoint * midpoint) *
-               width * (1.0 + correction);
-    }
-
-    // Use upper tails when both CDFs would be close to one.
     return lower >= 0.0
-        ? payoff_normal_survival(lower) -
-          payoff_normal_survival(upper)
-        : payoff_normal_cdf(upper) -
-          payoff_normal_cdf(lower);
+        ? payoff_normal_cdf(-lower) - payoff_normal_cdf(-upper)
+        : payoff_normal_cdf( upper) - payoff_normal_cdf( lower);
 }
 
 } // namespace detail
@@ -149,7 +120,6 @@ struct MinMaxPayoff {
                 "Fund forward overflows or underflows to zero.");
         }
 
-
         const double log_minimum = minimum == 0.0
             ? -std::numeric_limits<double>::infinity()
             : detail::payoff_log_ratio(minimum, forward);
@@ -164,6 +134,27 @@ struct MinMaxPayoff {
         return Prepared{
             forward, growth, minimum, maximum,
             log_minimum, log_maximum, log_guarantees};
+    }
+
+    // Realized payoff and pathwise fund delta. log_financial_factor is
+    // log(X_t / (X_0 * exp(r*t))); guarantees remain fixed in the derivative.
+    // At a kink use the symmetric derivative, also used by evaluate(V=0).
+    [[nodiscard]] static PayoffDelta evaluate_sample(
+        const Prepared& prepared,
+        double log_financial_factor) noexcept
+    {
+        if (log_financial_factor < prepared.log_minimum_forward_ratio_) {
+            return {prepared.minimum_, 0.0};
+        }
+        if (log_financial_factor > prepared.log_maximum_forward_ratio_) {
+            return {prepared.maximum_, 0.0};
+        }
+        const double factor = std::exp(log_financial_factor);
+        const bool boundary =
+            log_financial_factor == prepared.log_minimum_forward_ratio_ ||
+            log_financial_factor == prepared.log_maximum_forward_ratio_;
+        return {prepared.forward_ * factor,
+                prepared.growth_ * factor * (boundary ? 0.5 : 1.0)};
     }
 
     // Undiscounted conditional expected payoff and its fund delta.
@@ -191,7 +182,8 @@ struct MinMaxPayoff {
                 prepared.growth_ * (boundary ? 0.5 : 1.0)};
         }
 
-        const double half_deviation = 0.5 * std::sqrt(integrated_variance);
+        const double half_deviation =
+            0.5 * std::sqrt(integrated_variance);
         const double inv_deviation = 0.5 / half_deviation;
 
         const double lower_scaled =
@@ -205,19 +197,18 @@ struct MinMaxPayoff {
         const double b_upper = upper_scaled + half_deviation;
 
         const double probability =
-                    prepared.minimum_ == 0.0
-                        ? detail::payoff_normal_cdf(a_upper)
-                        : detail::payoff_normal_interval(
-                            a_lower,
-                            a_upper,
-                            prepared.log_guarantee_ratio_ * inv_deviation);
+            prepared.minimum_ == 0.0
+                ? detail::payoff_normal_cdf(a_upper)
+                : detail::payoff_normal_interval(
+                    a_lower,
+                    a_upper,
+                    prepared.log_guarantee_ratio_ * inv_deviation);
 
         const double payoff =
             prepared.minimum_ * detail::payoff_normal_cdf(b_lower) +
             prepared.maximum_ * detail::payoff_normal_survival(b_upper) +
             prepared.forward_ * probability;
 
-        // The expected payoff lies between the guarantees; clamp roundoff.
         return {payoff, prepared.growth_ * probability};
     }
 };
