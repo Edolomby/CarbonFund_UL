@@ -72,3 +72,16 @@ Testing/
 # other files
 /boost_1_90_0/
 CMakeUserPresets.json
+
+# Generated files
+/build*/
+/results/
+/hedging_analysis/
+/.venv*/
+__pycache__/
+*.py[cod]
+/boost_1_90_0.disabled/
+
+# Generated benchmark outputs
+/paper_path_*.csv
+/paper_path_*.json

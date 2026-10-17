@@ -1,5 +1,6 @@
 #include <carbonfund/pricing/petiei_monte_carlo.hpp>
 #include <carbonfund/random/simulation_rng.hpp>
+#include <carbonfund/utils/TablePrinter.hpp>
 #include <boost/math/distributions/students_t.hpp>
 #include <algorithm>
 #include <array>
@@ -163,6 +164,51 @@ double median(std::vector<double> x)
     std::sort(x.begin(),x.end());const auto n=x.size();
     return n%2?x[n/2]:.5*(x[n/2-1]+x[n/2]);
 }
+void print_summary_table(
+    const std::array<Measurement, 4>& results,
+    const std::array<std::vector<double>, 4>& timings)
+{
+    std::vector<std::string> configurations;
+    std::vector<std::string> price_reductions, delta_reductions;
+    std::vector<double> prices, price_variances, price_errors;
+    std::vector<double> deltas, delta_variances, delta_errors, cpu_seconds;
+
+    // Equal trajectory counts: compare variances of the estimated means.
+    // This accounts for the smaller number of independent antithetic pairs.
+    const auto reduction_percent = [](double se, double reference_se, bool baseline) {
+        if (baseline) return std::string{"0%"};
+        const double reference_variance = reference_se * reference_se;
+        if (reference_variance == 0.0) return std::string{"n/a"};
+        const double reduction = 100.0 * (1.0 - se * se / reference_variance);
+        return cf::utils::toString(reduction,
+            cf::utils::TableConfig{cf::utils::FloatFormat::Fixed, 6}) + "%";
+    };
+
+    for (std::size_t mode = 0; mode < results.size(); ++mode) {
+        const auto& estimate = results[mode].estimate;
+        configurations.emplace_back(mode_names[mode]);
+        prices.push_back(estimate.price.mean);
+        price_variances.push_back(estimate.price.sample_variance);
+        price_reductions.push_back(reduction_percent(
+            estimate.price.standard_error,
+            results[0].estimate.price.standard_error, mode == 0));
+        price_errors.push_back(estimate.price.standard_error);
+        deltas.push_back(estimate.delta.mean);
+        delta_variances.push_back(estimate.delta.sample_variance);
+        delta_reductions.push_back(reduction_percent(
+            estimate.delta.standard_error,
+            results[0].estimate.delta.standard_error, mode == 0));
+        delta_errors.push_back(estimate.delta.standard_error);
+        cpu_seconds.push_back(median(timings[mode]));
+    }
+
+    cf::utils::printVectors(
+        cf::utils::TableConfig{cf::utils::FloatFormat::Default, 10},
+        {"Configuration", "Price", "Price variance", "Price VR (%)", "Price SE",
+         "Delta", "Delta variance", "Delta VR (%)", "Delta SE", "CPU (s)"},
+        configurations, prices, price_variances, price_reductions, price_errors,
+        deltas, delta_variances, delta_reductions, delta_errors, cpu_seconds);
+}
 struct Outputs {
     std::ofstream summary,timings,reference,batches,agreement,main_agreement,calibration;
     explicit Outputs(const std::string& p):summary(p+"_summary.csv"),timings(p+"_timings.csv"),
@@ -319,22 +365,21 @@ int main(int argc,char** argv)
                             <<e[q].mean<<','<<e[q].sample_variance<<','<<e[q].standard_error<<','
                             <<e[q].mean-critical*e[q].standard_error<<','<<e[q].mean+critical*e[q].standard_error<<','
                             <<paths*se2<<',';
-                        if(base_se2>0) output.summary<<100*(1-se2/base_se2);
+                        if(mode==0) output.summary<<0;
+                        else if(base_se2>0) output.summary<<100*(1-se2/base_se2);
                         output.summary<<',';
                         if(e[q].standard_error>0) output.summary<<base[q].standard_error/e[q].standard_error;
                         output.summary<<','<<cpu<<','<<cpu*se2<<',';
                         if(cpu>0 && se2>0) output.summary<<baseline_cpu*base_se2/(cpu*se2);
                         output.summary<<','<<mix(tag)<<'\n';
                     }
-                    std::cout<<"  "<<std::setw(23)<<std::left<<mode_names[mode]<<std::right
-                        <<" price="<<std::setprecision(10)<<e[0].mean<<" SE="<<e[0].standard_error
-                        <<" delta="<<e[1].mean<<" delta_SE="<<e[1].standard_error<<" CPU="<<cpu<<" s\n";
                     if(mode==0 || mode==2) {
                         const double reference=mode==0?paper_standard[ci][ti]:paper_conditioned[ci][ti];
                         output.reference<<fund_name(o.fund)<<','<<maturities[ti]<<','<<contract_names[ci]<<','<<mode_names[mode]<<','
                             <<e[0].sample_variance<<','<<reference<<','<<100*(e[0].sample_variance/reference-1)<<'\n';
                     }
                 }
+                print_summary_table(first, times);
                 output.summary.flush();output.timings.flush();output.reference.flush();std::cout<<std::flush;
                 validate(o,prepared,ti,ci,tag,first,output,counts,main_counts);
                 std::cout<<"  Validation batches completed: "<<o.batches<<'\n'<<std::flush;

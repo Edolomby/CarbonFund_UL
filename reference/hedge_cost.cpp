@@ -12,12 +12,16 @@
 #include <complex>
 #include <cmath>
 #include <stack>
+#include <numeric>
+#include <string>
+#include <vector>
 #include "Eigen/Dense"
 #include "Eigen/Eigenvalues"
 #include "carbon_models_4d.h"
 #include <stdexcept>
 //#include <boost/math/distributions/non_central_chi_squared.hpp>
 #include <matplot/matplot.h>
+#include <carbonfund/utils/TablePrinter.hpp>
 
 // Intel 2026.1.1 crashes when a dynamically initialized thread_local is in an
 // OpenMP parallel block. Each Site keeps a separate generator for each thread.
@@ -158,7 +162,8 @@ struct Scenarios {
    * 'const' because it does not modify the state of the object.
    */
   void print() const {
-    std::cout << std::fixed << std::setprecision(4); // Set precision for floating-point output
+    const carbonfund::utils::TableConfig config{
+      carbonfund::utils::FloatFormat::Fixed, 4};
 
     std::cout << "--- Printing Scenarios ---" << std::endl;
 
@@ -171,16 +176,14 @@ struct Scenarios {
 
     // Loop through each scenario
     for (size_t i = 0; i < num_scenarios; ++i) {
-      std::cout << "\n==========================" << std::endl;
-      std::cout << "       Scenario " << i + 1 << std::endl;
-      std::cout << "==========================" << std::endl;
+      std::cout << "\nScenario " << i + 1 << std::endl;
 
       // --- Print X data for the current scenario ---
       std::cout << "\n--- Data X ---" << std::endl;
       if (i < X.size() && !X[i].empty()) {
-        for (size_t j = 0; j < X[i].size(); ++j) {
-          std::cout << "X[" << i << "][" << j << "]: " << X[i][j] << std::endl;
-        }
+        std::vector<size_t> steps(X[i].size());
+        std::iota(steps.begin(), steps.end(), size_t{0});
+        carbonfund::utils::printVectors(config, {"Step", "X"}, steps, X[i]);
       } else {
         std::cout << "No X data for this scenario." << std::endl;
       }
@@ -188,9 +191,18 @@ struct Scenarios {
       // --- Print Y data for the current scenario ---
       std::cout << "\n--- Data Y ---" << std::endl;
       if (i < Y.size() && !Y[i].empty()) {
-        for (size_t j = 0; j < Y[i].size(); ++j) {
-          std::cout << "Y[" << i << "][" << j << "]:\n" << Y[i][j].transpose() << std::endl;
+        std::vector<size_t> steps(Y[i].size());
+        std::iota(steps.begin(), steps.end(), size_t{0});
+        std::vector<std::string> factors;
+        for (const auto& state : Y[i]) {
+          std::string values;
+          for (Eigen::Index factor = 0; factor < state.size(); ++factor) {
+            if (factor > 0) values += ", ";
+            values += carbonfund::utils::toString(state(factor), config);
+          }
+          factors.push_back(values);
         }
+        carbonfund::utils::printVectors({"Step", "Y factors"}, steps, factors);
       } else {
         std::cout << "No Y data for this scenario." << std::endl;
       }
@@ -312,49 +324,28 @@ struct PETIEI_polyciholders{
 
   // Optional: A helper function to print the state of the struct
   void print_summary() const {
-    std::cout << "--- Struct Summary ---" << std::endl;
-    std::cout << "PE Group:" << std::endl;
-    std::cout << "  Age vector size: " << age_PE.size() << std::endl;
-    std::cout << "  Nominals vector size: " << nominals_PE.size() << std::endl;
-    if (!nominals_PE.empty()) {
-        std::cout << "    -> Each 'Nominals' array has size: " << nominals_PE[0].size() 
-                  << " with value: " << nominals_PE[0][0] << std::endl;
-    }
-    std::cout << "  Is Alive vector size: " << is_alive_PE.size() << std::endl;
-    if (!is_alive_PE.empty()) {
-        std::cout << "    -> Each 'Is Alive' array has size: " << is_alive_PE[0].size() << std::endl;
-    }
-    std::cout << "  Nominals Sum vector size: " << nominals_sum_PE.size() << std::endl;
-    std::cout << "  Nominals Sum value: " << (nominals_sum_PE.empty() ? "N/A" : std::to_string(nominals_sum_PE[0])) << std::endl;
-    
-    std::cout << "\nTI Group:" << std::endl;
-    std::cout << "  Age vector size: " << age_TI.size() << std::endl;
-    std::cout << "  Nominals vector size: " << nominals_TI.size() << std::endl;
-    if (!nominals_TI.empty()) {
-        std::cout << "    -> Each 'Nominals' array has size: " << nominals_TI[0].size() 
-                  << " with value: " << nominals_TI[0][0] << std::endl;
-    }
-    std::cout << "  Is Alive vector size: " << is_alive_TI.size() << std::endl;
-    if (!is_alive_TI.empty()) {
-        std::cout << "    -> Each 'Is Alive' array has size: " << is_alive_TI[0].size() << std::endl;
-    }
-    std::cout << "  Nominals Sum vector size: " << nominals_sum_TI.size() << std::endl;
-    std::cout << "  Nominals Sum value: " << (nominals_sum_TI.empty() ? "N/A" : std::to_string(nominals_sum_TI[0])) << std::endl;
-
-    std::cout << "\nEI Group:" << std::endl;
-    std::cout << "  Age vector size: " << age_EI.size() << std::endl;
-    std::cout << "  Nominals vector size: " << nominals_EI.size() << std::endl;
-    if (!nominals_EI.empty()) {
-        std::cout << "    -> Each 'Nominals' array has size: " << nominals_EI[0].size() 
-                  << " with value: " << nominals_EI[0][0] << std::endl;
-    }
-    std::cout << "  Is Alive vector size: " << is_alive_EI.size() << std::endl;
-    if (!is_alive_EI.empty()) {
-        std::cout << "    -> Each 'Is Alive' array has size: " << is_alive_EI[0].size() << std::endl;
-    }
-    std::cout << "  Nominals Sum vector size: " << nominals_sum_EI.size() << std::endl;
-    std::cout << "  Nominals Sum value: " << (nominals_sum_EI.empty() ? "N/A" : std::to_string(nominals_sum_EI[0])) << std::endl;
-    std::cout << "----------------------" << std::endl;
+    using namespace carbonfund::utils;
+    const TableConfig config{FloatFormat::Default, 6};
+    const auto column = [&](const auto& ages, const auto& nominals,
+                            const auto& alive, const auto& sums) {
+      return std::vector<std::string>{
+        toString(ages.size()), toString(nominals.size()),
+        nominals.empty() ? "N/A" : toString(nominals.front().size()),
+        nominals.empty() || nominals.front().size() == 0
+          ? "N/A" : toString(nominals.front()(0), config),
+        toString(alive.size()),
+        alive.empty() ? "N/A" : toString(alive.front().size()),
+        toString(sums.size()),
+        sums.empty() ? "N/A" : toString(sums.front(), config)};
+    };
+    std::cout << "--- Struct Summary ---\n";
+    printVectors({"Measurement", "PE", "TI", "EI"},
+      std::vector<std::string>{"Age rows", "Nominal rows", "First nominal array size",
+        "First nominal value", "Alive rows", "First alive array size",
+        "Nominal sum rows", "First nominal sum"},
+      column(age_PE, nominals_PE, is_alive_PE, nominals_sum_PE),
+      column(age_TI, nominals_TI, is_alive_TI, nominals_sum_TI),
+      column(age_EI, nominals_EI, is_alive_EI, nominals_sum_EI));
   }
 };
 
@@ -387,8 +378,9 @@ void print_vector(std::vector<T> V, int i = -999999)
 {
   if (i == -999999)
   {
-    for (T entry : V)
-      std::cout << entry << std::endl;
+    carbonfund::utils::printVectors(
+      carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+      {"Value"}, V);
   }
   else
   {
@@ -398,8 +390,10 @@ void print_vector(std::vector<T> V, int i = -999999)
     }
     else if (i < V.size())
     {
-      for (int j = 0; j < i; j++)
-        std::cout << V[j] << std::endl;
+      const std::vector<T> selected(V.begin(), V.begin() + i);
+      carbonfund::utils::printVectors(
+        carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+        {"Value"}, selected);
     }
   }
 }
@@ -4092,10 +4086,12 @@ PE_hedge_cost_paral(double CRRA_delta, double X0, double r, ArrayXd mu, ArrayXd 
                   min_gua, max_gua, T, N_delta, M_delta,
                   price_start, var_price_start, delta_start, var_delta_start);
   
-  std::cout << "price in MMM    = " << price_start  << std::endl;
-  std::cout << "   price   CI95 = " << 1.96*sqrt(price_start/M_delta)  << std::endl;
-  std::cout << "delta at time 0 = " << delta_start  << std::endl;
-  std::cout << "   delta   CI95 = " << 1.96*sqrt(var_delta_start/M_delta)  << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Estimate", "Value", "95% CI half-width"},
+    std::vector<std::string>{"Price in MMM", "Delta at time 0"},
+    std::vector<double>{price_start, delta_start},
+    std::vector<double>{1.96*sqrt(price_start/M_delta), 1.96*sqrt(var_delta_start/M_delta)});
 
   ArrayXd bonds(M);
   double bond_start = price_start - delta_start*X0;
@@ -4230,10 +4226,12 @@ PE_hedge_cost_paral(double CRRA_delta, double X0, double r, ArrayXd mu, ArrayXd 
 
   double mean_cost = mean(COST);
   std::pair<double,double> output_var = empirical_var_CI95(COST);
-  std::cout << "expected value of cost = " << mean_cost    << std::endl;
-  std::cout << "CI95  expected value   = " << 1.96*sqrt(output_var.first/M) << std::endl;
-  std::cout << "     var cost = " << output_var.first << std::endl;
-  std::cout << "CI95 var cost = " << output_var.second << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Cost statistic", "Value", "95% CI half-width"},
+    std::vector<std::string>{"Mean", "Variance"},
+    std::vector<double>{mean_cost, output_var.first},
+    std::vector<double>{1.96*sqrt(output_var.first/M), output_var.second});
 
   std::vector<double> Trading_gains(trading_gains.size(),0.0);
   for(int i=0;i<trading_gains.size();i++)
@@ -4273,10 +4271,12 @@ TI_hedge_cost_paral(double CRRA_delta, double X0, double r, ArrayXd mu, ArrayXd 
                   X0, X0, min_rate, max_rate, T, N_delta, M_delta,
                   price_start, var_price_start, delta_start, var_delta_start);
   
-  std::cout << "price in MMM    = " << price_start  << std::endl;
-  std::cout << "   price   CI95 = " << 1.96*sqrt(price_start/M_delta)  << std::endl;
-  std::cout << "delta at time 0 = " << delta_start  << std::endl;
-  std::cout << "   delta   CI95 = " << 1.96*sqrt(var_delta_start/M_delta)  << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Estimate", "Value", "95% CI half-width"},
+    std::vector<std::string>{"Price in MMM", "Delta at time 0"},
+    std::vector<double>{price_start, delta_start},
+    std::vector<double>{1.96*sqrt(price_start/M_delta), 1.96*sqrt(var_delta_start/M_delta)});
 
   ArrayXd bonds(M);
   double bond_start = price_start - delta_start*X0;
@@ -4405,10 +4405,12 @@ TI_hedge_cost_paral(double CRRA_delta, double X0, double r, ArrayXd mu, ArrayXd 
 
   double mean_cost = mean(COST);
   std::pair<double,double> output_var = empirical_var_CI95(COST);
-  std::cout << "expected value of cost = " << mean_cost    << std::endl;
-  std::cout << "CI95  expected value   = " << 1.96*sqrt(output_var.first/M) << std::endl;
-  std::cout << "     var cost = " << output_var.first << std::endl;
-  std::cout << "CI95 var cost = " << output_var.second << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Cost statistic", "Value", "95% CI half-width"},
+    std::vector<std::string>{"Mean", "Variance"},
+    std::vector<double>{mean_cost, output_var.first},
+    std::vector<double>{1.96*sqrt(output_var.first/M), output_var.second});
 
 
   Output_hedging output;
@@ -4447,9 +4449,14 @@ EI_hedge_cost_paral(double CRRA_delta, double X0, double r, ArrayXd mu, ArrayXd 
                   X0, X0, min_rate, max_rate, perc_prem_death, T, N_delta, M_delta,
                   price_start, var_price_start, delta_start, var_delta_start);
   
-  std::cout << "price in MMM    = " << price_start  << std::endl;
-  std::cout << "delta at time 0 = " << delta_start  << std::endl;
-  std::cout << "           CI95 = " << 1.96*sqrt(var_delta_start/M_delta)  << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Estimate", "Value", "95% CI half-width"},
+    std::vector<std::string>{"Price in MMM", "Delta at time 0"},
+    std::vector<double>{price_start, delta_start},
+    std::vector<std::string>{"n/a", carbonfund::utils::toString(
+      1.96*sqrt(var_delta_start/M_delta),
+      carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6})});
 
   ArrayXd bonds(M);
   double bond_start = price_start - delta_start*X0;
@@ -4593,10 +4600,12 @@ EI_hedge_cost_paral(double CRRA_delta, double X0, double r, ArrayXd mu, ArrayXd 
 
   double mean_cost = mean(COST);
   std::pair<double,double> output_var = empirical_var_CI95(COST);
-  std::cout << "expected value of cost = " << mean_cost    << std::endl;
-  std::cout << "CI95  expected value   = " << 1.96*sqrt(output_var.first/M) << std::endl;
-  std::cout << "     var cost = " << output_var.first << std::endl;
-  std::cout << "CI95 var cost = " << output_var.second << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Cost statistic", "Value", "95% CI half-width"},
+    std::vector<std::string>{"Mean", "Variance"},
+    std::vector<double>{mean_cost, output_var.first},
+    std::vector<double>{1.96*sqrt(output_var.first/M), output_var.second});
 
   std::vector<double> Trading_gains(trading_gains.size(),0.0);
   for(int i=0;i<trading_gains.size();i++)
@@ -4643,18 +4652,18 @@ PETIEI_hedge_cost_paral(double CRRA_delta, ArrayXd X_PE, ArrayXd X_TI, ArrayXd X
                   price_start_TI, var_price_start_TI, delta_start_TI, var_delta_start_TI,
                   price_start_EI, var_price_start_EI, delta_start_EI, var_delta_start_EI);
   
-  std::cout << "price_PE in MMM = " << price_start_PE  << std::endl;
-  std::cout << "           CI95 = " << 1.96*sqrt(var_price_start_PE/M_delta)  << std::endl;
-  std::cout << "price_TI in MMM = " << price_start_TI  << std::endl;
-  std::cout << "           CI95 = " << 1.96*sqrt(var_price_start_TI/M_delta)  << std::endl;
-  std::cout << "price_EI in MMM = " << price_start_EI  << std::endl;
-  std::cout << "           CI95 = " << 1.96*sqrt(var_price_start_EI/M_delta)  << std::endl;
-  std::cout << "delta_PE at time 0 = " << delta_start_PE  << std::endl;
-  std::cout << "              CI95 = " << 1.96*sqrt(var_delta_start_PE/M_delta)  << std::endl;
-  std::cout << "delta_TI at time 0 = " << delta_start_TI  << std::endl;
-  std::cout << "              CI95 = " << 1.96*sqrt(var_delta_start_TI/M_delta)  << std::endl;
-  std::cout << "delta_EI at time 0 = " << delta_start_EI  << std::endl;
-  std::cout << "              CI95 = " << 1.96*sqrt(var_delta_start_EI/M_delta)  << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Contract", "Price in MMM", "Price CI95 half-width", "Delta at time 0", "Delta CI95 half-width"},
+    std::vector<std::string>{"PE", "TI", "EI"},
+    std::vector<double>{price_start_PE, price_start_TI, price_start_EI},
+    std::vector<double>{1.96*sqrt(var_price_start_PE/M_delta),
+      1.96*sqrt(var_price_start_TI/M_delta),
+      1.96*sqrt(var_price_start_EI/M_delta)},
+    std::vector<double>{delta_start_PE, delta_start_TI, delta_start_EI},
+    std::vector<double>{1.96*sqrt(var_delta_start_PE/M_delta),
+      1.96*sqrt(var_delta_start_TI/M_delta),
+      1.96*sqrt(var_delta_start_EI/M_delta)});
 
   double start_nominal_PE = X_PE.sum();
   double start_nominal_TI = X_TI.sum();
@@ -4666,8 +4675,11 @@ PETIEI_hedge_cost_paral(double CRRA_delta, ArrayXd X_PE, ArrayXd X_TI, ArrayXd X
   double delta_start = start_nominal_PE*delta_start_PE + start_nominal_TI*delta_start_TI
                                               + start_nominal_EI*delta_start_EI;
 
-  std::cout << "price_start = " << price_start   << std::endl;
-  std::cout << "delta_start = " << delta_start   << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Portfolio total", "Value"},
+    std::vector<std::string>{"Price", "Delta"},
+    std::vector<double>{price_start, delta_start});
 
   ArrayXd bonds(M);
   double bond_start = price_start  - delta_start; //X0=1.0
@@ -4879,10 +4891,12 @@ PETIEI_hedge_cost_paral(double CRRA_delta, ArrayXd X_PE, ArrayXd X_TI, ArrayXd X
 
   double mean_cost = mean(COST);
   std::pair<double,double> output_var = empirical_var_CI95(COST);
-  std::cout << "expected value of cost = " << mean_cost    << std::endl;
-  std::cout << "CI95  expected value   = " << 1.96*sqrt(output_var.first/M) << std::endl;
-  std::cout << "     var cost = " << output_var.first << std::endl;
-  std::cout << "CI95 var cost = " << output_var.second << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Cost statistic", "Value", "95% CI half-width"},
+    std::vector<std::string>{"Mean", "Variance"},
+    std::vector<double>{mean_cost, output_var.first},
+    std::vector<double>{1.96*sqrt(output_var.first/M), output_var.second});
 
 
   Output_hedging output;
@@ -4924,18 +4938,14 @@ PETIEI_hedge_cost_paral_MLMC(double CRRA_delta, ArrayXd X_PE, ArrayXd X_TI, Arra
                   price_start_TI, CI_price_start_TI, delta_start_TI, CI_delta_start_TI,
                   price_start_EI, CI_price_start_EI, delta_start_EI, CI_delta_start_EI);
   
-  std::cout << "price_PE in MMM = " << price_start_PE  << std::endl;
-  std::cout << "           CI95 = " << CI_price_start_PE  << std::endl;
-  std::cout << "price_TI in MMM = " << price_start_TI  << std::endl;
-  std::cout << "           CI95 = " << CI_price_start_TI  << std::endl;
-  std::cout << "price_EI in MMM = " << price_start_EI  << std::endl;
-  std::cout << "           CI95 = " << CI_price_start_EI  << std::endl;
-  std::cout << "delta_PE at time 0 = " << delta_start_PE  << std::endl;
-  std::cout << "              CI95 = " << CI_delta_start_PE  << std::endl;
-  std::cout << "delta_TI at time 0 = " << delta_start_TI  << std::endl;
-  std::cout << "              CI95 = " << CI_delta_start_TI  << std::endl;
-  std::cout << "delta_EI at time 0 = " << delta_start_EI  << std::endl;
-  std::cout << "              CI95 = " << CI_delta_start_EI  << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Contract", "Price in MMM", "Price CI95 half-width", "Delta at time 0", "Delta CI95 half-width"},
+    std::vector<std::string>{"PE", "TI", "EI"},
+    std::vector<double>{price_start_PE, price_start_TI, price_start_EI},
+    std::vector<double>{CI_price_start_PE, CI_price_start_TI, CI_price_start_EI},
+    std::vector<double>{delta_start_PE, delta_start_TI, delta_start_EI},
+    std::vector<double>{CI_delta_start_PE, CI_delta_start_TI, CI_delta_start_EI});
 
   double start_nominal_PE = X_PE.sum();
   double start_nominal_TI = X_TI.sum();
@@ -4947,8 +4957,11 @@ PETIEI_hedge_cost_paral_MLMC(double CRRA_delta, ArrayXd X_PE, ArrayXd X_TI, Arra
   double delta_start = start_nominal_PE*delta_start_PE + start_nominal_TI*delta_start_TI
                                               + start_nominal_EI*delta_start_EI;
 
-  std::cout << "price_start = " << price_start   << std::endl;
-  std::cout << "delta_start = " << delta_start   << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Portfolio total", "Value"},
+    std::vector<std::string>{"Price", "Delta"},
+    std::vector<double>{price_start, delta_start});
 
   ArrayXd bonds(M);
   double bond_start = price_start  - delta_start; //X0=1.0
@@ -5162,10 +5175,12 @@ PETIEI_hedge_cost_paral_MLMC(double CRRA_delta, ArrayXd X_PE, ArrayXd X_TI, Arra
 
   double mean_cost = mean(COST);
   std::pair<double,double> output_var = empirical_var_CI95(COST);
-  std::cout << "expected value of cost = " << mean_cost    << std::endl;
-  std::cout << "CI95  expected value   = " << 1.96*sqrt(output_var.first/M) << std::endl;
-  std::cout << "     var cost = " << output_var.first << std::endl;
-  std::cout << "CI95 var cost = " << output_var.second << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Cost statistic", "Value", "95% CI half-width"},
+    std::vector<std::string>{"Mean", "Variance"},
+    std::vector<double>{mean_cost, output_var.first},
+    std::vector<double>{1.96*sqrt(output_var.first/M), output_var.second});
 
 
   Output_hedging output;
@@ -5352,25 +5367,28 @@ PETIEI_hedge_cost_paral_mc(double CRRA_delta, double r, ArrayXd mu, ArrayXd vols
                   price_start_TI, var_price_start_TI, delta_start_TI, var_delta_start_TI,
                   price_start_EI, var_price_start_EI, delta_start_EI, var_delta_start_EI);
   
-  std::cout << "price_PE in MMM = " << price_start_PE  << std::endl;
-  std::cout << "           CI95 = " << 1.96*sqrt(var_price_start_PE/M_delta)  << std::endl;
-  std::cout << "price_TI in MMM = " << price_start_TI  << std::endl;
-  std::cout << "           CI95 = " << 1.96*sqrt(var_price_start_TI/M_delta)  << std::endl;
-  std::cout << "price_EI in MMM = " << price_start_EI  << std::endl;
-  std::cout << "           CI95 = " << 1.96*sqrt(var_price_start_EI/M_delta)  << std::endl;
-  std::cout << "delta_PE at time 0 = " << delta_start_PE  << std::endl;
-  std::cout << "              CI95 = " << 1.96*sqrt(var_delta_start_PE/M_delta)  << std::endl;
-  std::cout << "delta_TI at time 0 = " << delta_start_TI  << std::endl;
-  std::cout << "              CI95 = " << 1.96*sqrt(var_delta_start_TI/M_delta)  << std::endl;
-  std::cout << "delta_EI at time 0 = " << delta_start_EI  << std::endl;
-  std::cout << "              CI95 = " << 1.96*sqrt(var_delta_start_EI/M_delta)  << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Contract", "Price in MMM", "Price CI95 half-width", "Delta at time 0", "Delta CI95 half-width"},
+    std::vector<std::string>{"PE", "TI", "EI"},
+    std::vector<double>{price_start_PE, price_start_TI, price_start_EI},
+    std::vector<double>{1.96*sqrt(var_price_start_PE/M_delta),
+      1.96*sqrt(var_price_start_TI/M_delta),
+      1.96*sqrt(var_price_start_EI/M_delta)},
+    std::vector<double>{delta_start_PE, delta_start_TI, delta_start_EI},
+    std::vector<double>{1.96*sqrt(var_delta_start_PE/M_delta),
+      1.96*sqrt(var_delta_start_TI/M_delta),
+      1.96*sqrt(var_delta_start_EI/M_delta)});
   
 
   double price_start = price_start_PE + price_start_TI + price_start_EI;
   double delta_start = delta_start_PE + delta_start_TI + delta_start_EI;
 
-  std::cout << "price_start = " << price_start   << std::endl;
-  std::cout << "delta_start = " << delta_start   << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Portfolio total", "Value"},
+    std::vector<std::string>{"Price", "Delta"},
+    std::vector<double>{price_start, delta_start});
 
 
   double bond_start = price_start  - delta_start; //X0=1.0
@@ -5610,10 +5628,12 @@ PETIEI_hedge_cost_paral_mc(double CRRA_delta, double r, ArrayXd mu, ArrayXd vols
 
   double mean_cost = mean(COST);
   std::pair<double,double> output_var = empirical_var_CI95(COST);
-  std::cout << "expected value of cost = " << mean_cost    << std::endl;
-  std::cout << "CI95  expected value   = " << 1.96*sqrt(output_var.first/M) << std::endl;
-  std::cout << "     var cost = " << output_var.first << std::endl;
-  std::cout << "CI95 var cost = " << output_var.second << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Cost statistic", "Value", "95% CI half-width"},
+    std::vector<std::string>{"Mean", "Variance"},
+    std::vector<double>{mean_cost, output_var.first},
+    std::vector<double>{1.96*sqrt(output_var.first/M), output_var.second});
 
   Output_hedging output;
   output.no_hedge = no_hedge;
@@ -5659,25 +5679,24 @@ PETIEI_hedge_cost_paral_mc_MLMC(double CRRA_delta, double r, ArrayXd mu, ArrayXd
                   price_start_TI, CI_price_start_TI, delta_start_TI, CI_delta_start_TI,
                   price_start_EI, CI_price_start_EI, delta_start_EI, CI_delta_start_EI);
   
-  std::cout << "price_PE in MMM = " << price_start_PE  << std::endl;
-  std::cout << "           CI95 = " << CI_price_start_PE  << std::endl;
-  std::cout << "price_TI in MMM = " << price_start_TI  << std::endl;
-  std::cout << "           CI95 = " << CI_price_start_TI  << std::endl;
-  std::cout << "price_EI in MMM = " << price_start_EI  << std::endl;
-  std::cout << "           CI95 = " << CI_price_start_EI  << std::endl;
-  std::cout << "delta_PE at time 0 = " << delta_start_PE  << std::endl;
-  std::cout << "              CI95 = " << CI_delta_start_PE  << std::endl;
-  std::cout << "delta_TI at time 0 = " << delta_start_TI  << std::endl;
-  std::cout << "              CI95 = " << CI_delta_start_TI  << std::endl;
-  std::cout << "delta_EI at time 0 = " << delta_start_EI  << std::endl;
-  std::cout << "              CI95 = " << CI_delta_start_EI  << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Contract", "Price in MMM", "Price CI95 half-width", "Delta at time 0", "Delta CI95 half-width"},
+    std::vector<std::string>{"PE", "TI", "EI"},
+    std::vector<double>{price_start_PE, price_start_TI, price_start_EI},
+    std::vector<double>{CI_price_start_PE, CI_price_start_TI, CI_price_start_EI},
+    std::vector<double>{delta_start_PE, delta_start_TI, delta_start_EI},
+    std::vector<double>{CI_delta_start_PE, CI_delta_start_TI, CI_delta_start_EI});
   
 
   double price_start = price_start_PE + price_start_TI + price_start_EI;
   double delta_start = delta_start_PE + delta_start_TI + delta_start_EI;
 
-  std::cout << "price_start = " << price_start   << std::endl;
-  std::cout << "delta_start = " << delta_start   << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Portfolio total", "Value"},
+    std::vector<std::string>{"Price", "Delta"},
+    std::vector<double>{price_start, delta_start});
 
 
   double bond_start = price_start  - delta_start; //X0=1.0
@@ -5918,10 +5937,12 @@ PETIEI_hedge_cost_paral_mc_MLMC(double CRRA_delta, double r, ArrayXd mu, ArrayXd
 
   double mean_cost = mean(COST);
   std::pair<double,double> output_var = empirical_var_CI95(COST);
-  std::cout << "expected value of cost = " << mean_cost    << std::endl;
-  std::cout << "CI95  expected value   = " << 1.96*sqrt(output_var.first/M) << std::endl;
-  std::cout << "     var cost = " << output_var.first << std::endl;
-  std::cout << "CI95 var cost = " << output_var.second << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Cost statistic", "Value", "95% CI half-width"},
+    std::vector<std::string>{"Mean", "Variance"},
+    std::vector<double>{mean_cost, output_var.first},
+    std::vector<double>{1.96*sqrt(output_var.first/M), output_var.second});
 
   Output_hedging output;
   output.no_hedge = no_hedge;
@@ -5975,25 +5996,24 @@ PETIEI_hedge_cost_paral_mc_MLMC_scenarios(double CRRA_delta, double r, ArrayXd m
                   price_start_TI, CI_price_start_TI, delta_start_TI, CI_delta_start_TI,
                   price_start_EI, CI_price_start_EI, delta_start_EI, CI_delta_start_EI);
   
-  std::cout << "price_PE in MMM = " << price_start_PE  << std::endl;
-  std::cout << "           CI95 = " << CI_price_start_PE  << std::endl;
-  std::cout << "price_TI in MMM = " << price_start_TI  << std::endl;
-  std::cout << "           CI95 = " << CI_price_start_TI  << std::endl;
-  std::cout << "price_EI in MMM = " << price_start_EI  << std::endl;
-  std::cout << "           CI95 = " << CI_price_start_EI  << std::endl;
-  std::cout << "delta_PE at time 0 = " << delta_start_PE  << std::endl;
-  std::cout << "              CI95 = " << CI_delta_start_PE  << std::endl;
-  std::cout << "delta_TI at time 0 = " << delta_start_TI  << std::endl;
-  std::cout << "              CI95 = " << CI_delta_start_TI  << std::endl;
-  std::cout << "delta_EI at time 0 = " << delta_start_EI  << std::endl;
-  std::cout << "              CI95 = " << CI_delta_start_EI  << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Contract", "Price in MMM", "Price CI95 half-width", "Delta at time 0", "Delta CI95 half-width"},
+    std::vector<std::string>{"PE", "TI", "EI"},
+    std::vector<double>{price_start_PE, price_start_TI, price_start_EI},
+    std::vector<double>{CI_price_start_PE, CI_price_start_TI, CI_price_start_EI},
+    std::vector<double>{delta_start_PE, delta_start_TI, delta_start_EI},
+    std::vector<double>{CI_delta_start_PE, CI_delta_start_TI, CI_delta_start_EI});
   
 
   double price_start = price_start_PE + price_start_TI + price_start_EI;
   double delta_start = delta_start_PE + delta_start_TI + delta_start_EI;
 
-  std::cout << "price_start = " << price_start   << std::endl;
-  std::cout << "delta_start = " << delta_start   << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Portfolio total", "Value"},
+    std::vector<std::string>{"Price", "Delta"},
+    std::vector<double>{price_start, delta_start});
 
 
   double bond_start = price_start  - delta_start; //X0=1.0
@@ -6190,10 +6210,12 @@ PETIEI_hedge_cost_paral_mc_MLMC_scenarios(double CRRA_delta, double r, ArrayXd m
 
   double mean_cost = mean(COST);
   std::pair<double,double> output_var = empirical_var_CI95(COST);
-  std::cout << "expected value of cost = " << mean_cost    << std::endl;
-  std::cout << "CI95  expected value   = " << 1.96*sqrt(output_var.first/M) << std::endl;
-  std::cout << "     var cost = " << output_var.first << std::endl;
-  std::cout << "CI95 var cost = " << output_var.second << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Cost statistic", "Value", "95% CI half-width"},
+    std::vector<std::string>{"Mean", "Variance"},
+    std::vector<double>{mean_cost, output_var.first},
+    std::vector<double>{1.96*sqrt(output_var.first/M), output_var.second});
 
   Output_hedging output;
   output.no_hedge = no_hedge;
@@ -6281,25 +6303,28 @@ PETIEI_hedge_cost_paral_mc_scenarios_general_model(
                   price_start_TI, var_price_start_TI, delta_start_TI, var_delta_start_TI,
                   price_start_EI, var_price_start_EI, delta_start_EI, var_delta_start_EI);
   
-  std::cout << "price_PE in MMM = " << price_start_PE  << std::endl;
-  std::cout << "           CI95 = " << 1.96*sqrt(var_price_start_PE/(100.0*M_delta)) << std::endl;
-  std::cout << "price_TI in MMM = " << price_start_TI  << std::endl;
-  std::cout << "           CI95 = " << 1.96*sqrt(var_price_start_TI/(100.0*M_delta)) << std::endl;
-  std::cout << "price_EI in MMM = " << price_start_EI  << std::endl;
-  std::cout << "           CI95 = " << 1.96*sqrt(var_price_start_EI/(100.0*M_delta)) << std::endl;
-  std::cout << "delta_PE at time 0 = " << delta_start_PE  << std::endl;
-  std::cout << "              CI95 = " << 1.96*sqrt(var_delta_start_PE/(100.0*M_delta)) << std::endl;
-  std::cout << "delta_TI at time 0 = " << delta_start_TI  << std::endl;
-  std::cout << "              CI95 = " << 1.96*sqrt(var_delta_start_TI/(100.0*M_delta)) << std::endl;
-  std::cout << "delta_EI at time 0 = " << delta_start_EI  << std::endl;
-  std::cout << "              CI95 = " << 1.96*sqrt(var_delta_start_EI/(100.0*M_delta)) << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Contract", "Price in MMM", "Price CI95 half-width", "Delta at time 0", "Delta CI95 half-width"},
+    std::vector<std::string>{"PE", "TI", "EI"},
+    std::vector<double>{price_start_PE, price_start_TI, price_start_EI},
+    std::vector<double>{1.96*sqrt(var_price_start_PE/(100.0*M_delta)),
+      1.96*sqrt(var_price_start_TI/(100.0*M_delta)),
+      1.96*sqrt(var_price_start_EI/(100.0*M_delta))},
+    std::vector<double>{delta_start_PE, delta_start_TI, delta_start_EI},
+    std::vector<double>{1.96*sqrt(var_delta_start_PE/(100.0*M_delta)),
+      1.96*sqrt(var_delta_start_TI/(100.0*M_delta)),
+      1.96*sqrt(var_delta_start_EI/(100.0*M_delta))});
   
 
   double price_start = price_start_PE + price_start_TI + price_start_EI;
   double delta_start = delta_start_PE + delta_start_TI + delta_start_EI;
 
-  std::cout << "price_start = " << price_start   << std::endl;
-  std::cout << "delta_start = " << delta_start   << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Portfolio total", "Value"},
+    std::vector<std::string>{"Price", "Delta"},
+    std::vector<double>{price_start, delta_start});
 
 
   double bond_start = price_start  - delta_start; //X0=1.0
@@ -6488,10 +6513,12 @@ PETIEI_hedge_cost_paral_mc_scenarios_general_model(
 
   double mean_cost = mean(COST);
   std::pair<double,double> output_var = empirical_var_CI95(COST);
-  std::cout << "expected value of cost = " << mean_cost    << std::endl;
-  std::cout << "CI95  expected value   = " << 1.96*sqrt(output_var.first/M) << std::endl;
-  std::cout << "     var cost = " << output_var.first << std::endl;
-  std::cout << "CI95 var cost = " << output_var.second << std::endl;
+  carbonfund::utils::printVectors(
+    carbonfund::utils::TableConfig{carbonfund::utils::FloatFormat::Default, 6},
+    {"Cost statistic", "Value", "95% CI half-width"},
+    std::vector<std::string>{"Mean", "Variance"},
+    std::vector<double>{mean_cost, output_var.first},
+    std::vector<double>{1.96*sqrt(output_var.first/M), output_var.second});
 
   Output_hedging output;
   output.no_hedge = no_hedge;

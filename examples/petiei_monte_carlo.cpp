@@ -1,8 +1,9 @@
 #include <carbonfund/pricing/petiei_monte_carlo.hpp>
 #include <carbonfund/random/simulation_rng.hpp>
+#include <carbonfund/utils/TablePrinter.hpp>
 
-#include <iomanip>
-#include <iostream>
+#include <string>
+#include <vector>
 
 int main()
 {
@@ -85,26 +86,17 @@ int main()
     const auto result =
         Pricer::evaluate(prepared, 1000, rng);
 
-    const auto print = [](
-        const char* name,
-        const pricing::PetieiContractEstimate& value
-    ) {
-        std::cout <<
-            name <<
-            ": price=" << value.price.mean <<
-            ", price standard error=" <<
-                value.price.standard_error <<
-            ", delta=" << value.delta.mean <<
-            ", delta standard error=" <<
-                value.delta.standard_error <<
-            '\n';
-    };
-
-    std::cout <<
-        std::fixed <<
-        std::setprecision(6);
-
-    print("PE", result.pure_endowment);
-    print("TI", result.term_insurance);
-    print("EI", result.endowment_insurance);
+    const std::vector<std::string> names{"PE", "TI", "EI"};
+    std::vector<double> prices, price_errors, deltas, delta_errors;
+    for (const auto& value : {result.pure_endowment, result.term_insurance,
+                              result.endowment_insurance}) {
+        prices.push_back(value.price.mean);
+        price_errors.push_back(value.price.standard_error);
+        deltas.push_back(value.delta.mean);
+        delta_errors.push_back(value.delta.standard_error);
+    }
+    utils::printVectors(
+        utils::TableConfig{utils::FloatFormat::Fixed, 6},
+        {"Contract", "Price", "Price SE", "Delta", "Delta SE"},
+        names, prices, price_errors, deltas, delta_errors);
 }

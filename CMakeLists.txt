@@ -37,6 +37,7 @@ target_compile_features(carbonfund INTERFACE cxx_std_20)
 
 target_include_directories(carbonfund INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/utils>
 )
 
 target_link_libraries(carbonfund INTERFACE
@@ -61,6 +62,12 @@ target_link_libraries(benchmark_petiei_antithetic PRIVATE CarbonFund::carbonfund
 
 add_executable(benchmark_petiei_variance_reduction benchmarks/benchmark_petiei_variance_reduction.cpp)
 target_link_libraries(benchmark_petiei_variance_reduction PRIVATE CarbonFund::carbonfund)
+
+add_executable(example_policyholders examples/policyholders.cpp)
+target_link_libraries(example_policyholders PRIVATE CarbonFund::carbonfund)
+
+add_executable(example_petiei_hedging examples/petiei_hedging.cpp)
+target_link_libraries(example_petiei_hedging PRIVATE CarbonFund::carbonfund)
 
 
 # ==============================================================================
@@ -101,10 +108,18 @@ if(BUILD_TESTING)
     add_executable(test_petiei_monte_carlo tests/test_petiei_monte_carlo.cpp)
     target_link_libraries(test_petiei_monte_carlo PRIVATE CarbonFund::carbonfund)
     add_test(NAME petiei_monte_carlo COMMAND test_petiei_monte_carlo)
-    
+
     add_executable(test_petiei_estimators tests/test_petiei_estimators.cpp)
     target_link_libraries(test_petiei_estimators PRIVATE CarbonFund::carbonfund)
     add_test(NAME petiei_estimators COMMAND test_petiei_estimators)
+
+    add_executable(test_policyholders tests/test_policyholders.cpp)
+    target_link_libraries(test_policyholders PRIVATE CarbonFund::carbonfund)
+    add_test(NAME policyholders COMMAND test_policyholders)
+
+    add_executable(test_petiei_hedging tests/test_petiei_hedging.cpp)
+    target_link_libraries(test_petiei_hedging PRIVATE CarbonFund::carbonfund)
+    add_test(NAME petiei_hedging COMMAND test_petiei_hedging)
 endif()
 
 

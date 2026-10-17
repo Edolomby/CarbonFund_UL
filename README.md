@@ -25,9 +25,10 @@ The following complete program is provided in `examples/petiei_monte_carlo.cpp` 
 ```cpp
 #include <carbonfund/pricing/petiei_monte_carlo.hpp>
 #include <carbonfund/random/simulation_rng.hpp>
+#include <TablePrinter.hpp>
 
-#include <iomanip>
-#include <iostream>
+#include <string>
+#include <vector>
 
 int main()
 {
@@ -73,20 +74,19 @@ int main()
     random::SimulationRng rng{20261011};
     const auto result = Pricer::evaluate(prepared, 1000, rng);
 
-    const auto print = [](
-        const char* name, const pricing::PetieiContractEstimate& value) {
-        std::cout << name
-                  << ": price=" << value.price.mean
-                  << ", price standard error=" << value.price.standard_error
-                  << ", delta=" << value.delta.mean
-                  << ", delta standard error=" << value.delta.standard_error
-                  << '\n';
-    };
-
-    std::cout << std::fixed << std::setprecision(6);
-    print("PE", result.pure_endowment);
-    print("TI", result.term_insurance);
-    print("EI", result.endowment_insurance);
+    const std::vector<std::string> names{"PE", "TI", "EI"};
+    std::vector<double> prices, price_errors, deltas, delta_errors;
+    for (const auto& value : {result.pure_endowment, result.term_insurance,
+                              result.endowment_insurance}) {
+        prices.push_back(value.price.mean);
+        price_errors.push_back(value.price.standard_error);
+        deltas.push_back(value.delta.mean);
+        delta_errors.push_back(value.delta.standard_error);
+    }
+    utils::printVectors(
+        utils::TableConfig{utils::FloatFormat::Fixed, 6},
+        {"Contract", "Price", "Price SE", "Delta", "Delta SE"},
+        names, prices, price_errors, deltas, delta_errors);
 }
 ```
 
@@ -97,12 +97,18 @@ The mortality parameters are annual quantities. `gompertz_growth_rate` is the re
 With the validated configuration and the default antithetic sampling, the output is:
 
 ```text
-PE: price=87255.417096, price standard error=0.161860, delta=30234.971655, delta standard error=2.487991
-TI: price=10509.258869, price standard error=0.007455, delta=2520.084926, delta standard error=0.167233
-EI: price=97764.675965, price standard error=0.168755, delta=32755.056581, delta standard error=2.635167
++----------+--------------+----------+--------------+----------+
+| Contract | Price        | Price SE | Delta        | Delta SE |
++----------+--------------+----------+--------------+----------+
+| PE       | 87255.417096 | 0.161860 | 30234.971655 | 2.487991 |
+| TI       | 10509.258869 | 0.007455 | 2520.084926  | 0.167233 |
+| EI       | 97764.675965 | 0.168755 | 32755.056581 | 2.635167 |
++----------+--------------+----------+--------------+----------+
 ```
 
 These are results for the illustrative inputs above. Last digits can differ across compiler and dependency versions.
+
+Console tables use `utils/TablePrinter.hpp`, available as `<TablePrinter.hpp>` to targets linked with `CarbonFund::carbonfund`. Pass a `TableConfig` to choose default, fixed or scientific floating-point formatting and precision. `SE` denotes standard error. The examples and benchmarks use this utility for result tables; progress messages and errors remain plain text.
 
 ### Read the results
 

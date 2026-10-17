@@ -1,8 +1,10 @@
 #include <Eigen/Core>
 #include <boost/random/xoshiro.hpp>
 #include <boost/version.hpp>
+#include <carbonfund/utils/TablePrinter.hpp>
 
-#include <iostream>
+#include <string>
+#include <vector>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -15,22 +17,22 @@ int main()
     const Eigen::Vector4d values{1.0, 2.0, 3.0, 4.0};
     boost::random::xoshiro256pp rng;
 
-    std::cout << "Boost: " << BOOST_LIB_VERSION << '\n';
-    std::cout << "Eigen: "
-              << EIGEN_WORLD_VERSION << '.'
-              << EIGEN_MAJOR_VERSION << '.'
-              << EIGEN_MINOR_VERSION << '\n';
-
-    std::cout << "Eigen squared norm: "
-              << values.squaredNorm() << '\n';
-    std::cout << "Xoshiro sample: " << rng() << '\n';
+    const std::vector<std::string> checks{
+        "Boost", "Eigen", "Eigen squared norm", "Xoshiro sample", "OpenMP"};
+    std::vector<std::string> results{
+        BOOST_LIB_VERSION,
+        std::to_string(EIGEN_WORLD_VERSION) + '.' +
+            std::to_string(EIGEN_MAJOR_VERSION) + '.' +
+            std::to_string(EIGEN_MINOR_VERSION),
+        carbonfund::utils::toString(values.squaredNorm()),
+        carbonfund::utils::toString(rng())};
 
 #ifdef _OPENMP
-    std::cout << "OpenMP maximum threads: "
-              << omp_get_max_threads() << '\n';
+    results.push_back(std::to_string(omp_get_max_threads()) + " maximum threads");
 #else
-    std::cout << "OpenMP disabled\n";
+    results.emplace_back("disabled");
 #endif
+    carbonfund::utils::printVectors({"Check", "Result"}, checks, results);
 
     return values.squaredNorm() == 30.0 ? 0 : 1;
 }

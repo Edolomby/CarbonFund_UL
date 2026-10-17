@@ -1,5 +1,6 @@
 #include <carbonfund/pricing/petiei_monte_carlo.hpp>
 #include <carbonfund/random/simulation_rng.hpp>
+#include <carbonfund/utils/TablePrinter.hpp>
 
 #include <algorithm>
 #include <charconv>
@@ -8,7 +9,6 @@
 #include <cstdint>
 #include <ctime>
 #include <exception>
-#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -73,28 +73,42 @@ Measurement measure(
     return {result, static_cast<double>(end - begin) / CLOCKS_PER_SEC};
 }
 
-void print_estimate(
-    const char* quantity,
-    const MonteCarloEstimate& plain,
-    const MonteCarloEstimate& antithetic,
+void print_estimates(
+    const PetieiMonteCarloResult& plain_result,
+    const PetieiMonteCarloResult& antithetic_result,
     double plain_cpu,
     double antithetic_cpu)
 {
-    std::cout << std::left << std::setw(10) << quantity << std::right
-              << std::setw(16) << plain.mean
-              << std::setw(16) << antithetic.mean
-              << std::setw(14) << plain.standard_error
-              << std::setw(14) << antithetic.standard_error;
-    const double denominator = antithetic_cpu *
-        antithetic.standard_error * antithetic.standard_error;
-    if (denominator > 0.0 && plain_cpu > 0.0) {
-        const double efficiency =
-            plain_cpu * plain.standard_error * plain.standard_error / denominator;
-        std::cout << std::setw(13) << efficiency;
-    } else {
-        std::cout << std::setw(13) << "n/a";
-    }
-    std::cout << '\n';
+    using namespace carbonfund::utils;
+    const TableConfig config{FloatFormat::Fixed, 6};
+    const std::vector<std::string> quantities{
+        "PE price", "PE delta", "TI price", "TI delta", "EI price", "EI delta"};
+    std::vector<double> plain_means, antithetic_means, plain_errors, antithetic_errors;
+    std::vector<std::string> efficiencies;
+    const auto append = [&](const MonteCarloEstimate& plain,
+                            const MonteCarloEstimate& antithetic) {
+        plain_means.push_back(plain.mean);
+        antithetic_means.push_back(antithetic.mean);
+        plain_errors.push_back(plain.standard_error);
+        antithetic_errors.push_back(antithetic.standard_error);
+        const double denominator = antithetic_cpu *
+            antithetic.standard_error * antithetic.standard_error;
+        efficiencies.push_back(denominator > 0.0 && plain_cpu > 0.0
+            ? toString(plain_cpu * plain.standard_error * plain.standard_error /
+                       denominator, config)
+            : "n/a");
+    };
+    const auto append_contract = [&](const auto& plain, const auto& antithetic) {
+        append(plain.price, antithetic.price);
+        append(plain.delta, antithetic.delta);
+    };
+    append_contract(plain_result.pure_endowment, antithetic_result.pure_endowment);
+    append_contract(plain_result.term_insurance, antithetic_result.term_insurance);
+    append_contract(plain_result.endowment_insurance, antithetic_result.endowment_insurance);
+    printVectors(config,
+        {"Quantity", "Plain mean", "Anti mean", "Plain SE", "Anti SE", "Efficiency"},
+        quantities, plain_means, antithetic_means, plain_errors, antithetic_errors,
+        efficiencies);
 }
 
 template<class Stepper>
@@ -175,28 +189,22 @@ void benchmark_model(
 
     const double plain_cpu = median(plain_times);
     const double antithetic_cpu = median(antithetic_times);
-    std::cout << '\n' << model_name
-              << ": trajectories=" << simulations << " for both methods"
-              << ", independent observations=" << simulations
-              << " (plain), " << simulations / 2 << " (antithetic)\n"
-              << "Median process CPU seconds: plain=" << plain_cpu
-              << ", antithetic=" << antithetic_cpu;
+    const utils::TableConfig config{utils::FloatFormat::Fixed, 6};
+    std::cout << '\n' << model_name << '\n';
+    utils::printVectors({"Measurement", "Plain", "Antithetic"},
+        std::vector<std::string>{"Trajectories", "Independent observations",
+                                 "Median process CPU (s)"},
+        std::vector<std::string>{utils::toString(simulations),
+                                 utils::toString(simulations),
+                                 utils::toString(plain_cpu, config)},
+        std::vector<std::string>{utils::toString(simulations),
+                                 utils::toString(simulations / 2),
+                                 utils::toString(antithetic_cpu, config)});
     if (antithetic_cpu > 0.0) {
-        std::cout << ", CPU speedup=" << plain_cpu / antithetic_cpu << "x";
+        std::cout << "CPU speedup="
+                  << utils::toString(plain_cpu / antithetic_cpu, config) << "x\n";
     }
-    std::cout << '\n' << std::left << std::setw(10) << "Quantity" << std::right
-              << std::setw(16) << "Plain mean" << std::setw(16) << "Anti mean"
-              << std::setw(14) << "Plain SE" << std::setw(14) << "Anti SE"
-              << std::setw(13) << "Efficiency" << '\n';
-    const auto print = [&](const char* price_name, const char* delta_name,
-                           const pricing::PetieiContractEstimate& plain,
-                           const pricing::PetieiContractEstimate& antithetic) {
-        print_estimate(price_name, plain.price, antithetic.price, plain_cpu, antithetic_cpu);
-        print_estimate(delta_name, plain.delta, antithetic.delta, plain_cpu, antithetic_cpu);
-    };
-    print("PE price", "PE delta", plain_result.pure_endowment, antithetic_result.pure_endowment);
-    print("TI price", "TI delta", plain_result.term_insurance, antithetic_result.term_insurance);
-    print("EI price", "EI delta", plain_result.endowment_insurance, antithetic_result.endowment_insurance);
+    print_estimates(plain_result, antithetic_result, plain_cpu, antithetic_cpu);
 }
 
 } // namespace
@@ -233,7 +241,6 @@ int main(int argc, char** argv)
             throw std::overflow_error("Timing repetition seeds would overflow.");
         }
 
-        std::cout << std::fixed << std::setprecision(6);
 #ifdef NDEBUG
         std::cout << "Build: NDEBUG defined; use a Release build for CPU comparisons.\n";
 #else
