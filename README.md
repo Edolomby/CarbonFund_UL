@@ -22,12 +22,12 @@ Two different variances matter in these experiments. **Estimator variance** meas
 
 The current implementation uses four risky assets and a risk-free account. Each firm has a stochastic carbon-intensity factor. The fund's risky-asset weights solve
 
-$$
-\left[\delta A+\alpha\,\operatorname{diag}
+```math
+\left[\delta A+\alpha\,\mathrm{diag}
 \left(A_{11}C_1^+,\ldots,A_{44}C_4^+\right)\right]\pi^*(C)
 =\mu-r\mathbf{1},
 \qquad C_i^+=\max(C_i,0).
-$$
+```
 
 Here, $A$ is the asset-return covariance matrix, $\delta$ is risk aversion, and $\alpha$ controls the carbon penalty. These correspond to `covariance`, `risk_aversion` and `carbon_penalty` in `CarbonAllocationParameters4`. The remaining wealth is allocated to the risk-free account. Setting the penalty to zero recovers the corresponding allocation without carbon preferences.
 
@@ -55,11 +55,11 @@ The library supports three contract types, abbreviated PE, TI and EI:
 
 Benefits use a fund payoff with a minimum guarantee and an upper cap:
 
-$$
+```math
 H(t,x)=\min\!\left(\max(x,L(t)),U(t)\right),
 \qquad
 L(t)=L_0e^{g_Lt},\quad U(t)=U_0e^{g_Ut}.
-$$
+```
 
 The payoff is expressed per unit of policy notional. Prices and deltas returned for a portfolio already include its notionals, mortality weights and discounting.
 
@@ -78,10 +78,10 @@ Valuation uses the **minimal martingale measure**: the fund's financial drift be
 
 The hedge is expressed in fund units through the portfolio delta
 
-$$
+```math
 \Delta_t=\frac{\partial V}{\partial x}
 \left(t,X_t,C_t,\text{living portfolio}\right).
-$$
+```
 
 Holding $\Delta_t$ units of the fund gives risky-asset exposures $\Delta_t X_t\pi_i^*(C_t)$. The hedge account also holds cash. As time passes, valuation uses the observed fund and carbon state, the remaining maturity, the evolved contractual guarantees and the surviving policyholders.
 
@@ -97,12 +97,12 @@ The static strategy is an explicitly defined benchmark. Its mortality adjustment
 
 All reported costs are **discounted to time zero**, with positive values meaning additional funding required:
 
-$$
+```math
 \text{cost}
 =\sum_{k=1}^{K}e^{-rt_k}D_k-V_0
 -\sum_{k=1}^{K}\theta_{k-1}
 \left(e^{-rt_k}X_{t_k}-e^{-rt_{k-1}}X_{t_{k-1}}\right).
-$$
+```
 
 Here, $D_k$ is the benefit paid at a settlement date, $V_0$ is the initial premium and $\theta_{k-1}$ is the fund holding over the preceding interval. Dynamic capital additions and withdrawals are recorded at their discounted values. A negative cost is a net surplus.
 
@@ -125,9 +125,9 @@ Conditioned antithetic pricing is the default. At each carbon step, a four-dimen
 
 An antithetic pair contributes **one pair average** to the statistics. `sample_variance` is the variance of these independent observations, and
 
-$$
-\operatorname{SE}(\widehat V)=\sqrt{s^2/n},
-$$
+```math
+\mathrm{SE}(\widehat V)=\sqrt{s^2/n},
+```
 
 where $n$ is the number of independent paths or pairs. The same convention applies to delta. Odd antithetic requests round up to the next even trajectory count.
 
@@ -229,11 +229,11 @@ This compares the four configurations for PE, TI and EI at maturities 5, 10, 20 
 
 At equal actual trajectory count, the reported reduction for price or delta is
 
-$$
-\operatorname{VR}(\%)=100\left(1-
-\frac{\operatorname{SE}_{\text{method}}^2}
-     {\operatorname{SE}_{\text{standard}}^2}\right).
-$$
+```math
+\mathrm{VR}(\%)=100\left(1-
+\frac{\mathrm{SE}_{\text{method}}^2}
+     {\mathrm{SE}_{\text{standard}}^2}\right).
+```
 
 The standard row reports `0%`. This definition accounts for the smaller number of independent observations in antithetic mode. A raw path variance and a raw pair-average variance have different sample units and should not be compared directly.
 
