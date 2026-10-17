@@ -107,8 +107,7 @@ double death_weight(double t, double h, double r, bool endpoint)
 // equations provide a reference separate from the production hot loops.
 template<class Stepper>
 std::vector<Values> reference(const Fixture& x, std::span<const Eigen::Vector4d> carbon,
-                            std::span<const double> financial, PetieiContract contract,
-                            PetieiFundSampling coupling)
+                            std::span<const double> financial, PetieiContract contract)
 {
     const auto& p=x.p; const double h=p.time_to_maturity/p.time_intervals;
     const bool pe_only=contract==PetieiContract::pure_endowment;
@@ -148,8 +147,7 @@ std::vector<Values> reference(const Fixture& x, std::span<const Eigen::Vector4d>
             if(!pe_only) {
                 require(fpos<financial.size(),"Reference financial tape exhausted.");
                 const double f=financial[fpos++];
-                if(coupling==PetieiFundSampling::path) log_factor+=-.5*increment+std::sqrt(increment)*f;
-                else log_factor=-.5*v+std::sqrt(v)*f;
+                log_factor+=-.5*increment+std::sqrt(increment)*f;
                 const double t=(j+1)*h;
                 payoff=direct(p.fund_value*std::exp(x.a.risk_free_rate*t+log_factor),p.fund_value,
                     p.minimum_guarantee*std::exp(p.minimum_guarantee_growth_rate*t),
@@ -202,11 +200,11 @@ template<class Stepper> void check_reference()
     using P=PetieiMonteCarloPricer4<Stepper>;
     for(auto contract:{PetieiContract::all,PetieiContract::pure_endowment,
                        PetieiContract::term_insurance,PetieiContract::endowment_insurance})
-    for(auto coupling:{PetieiFundSampling::path,PetieiFundSampling::independent_marginals}) {
+    {
         CarbonTape cs{c};FinancialTape fs{f};
         const auto actual=P::evaluate(prepared,2,cs,fs,PetieiEstimator::standard,
-            PetieiSampling::independent,contract,coupling);
-        compare(actual,reference<Stepper>(x,c,f,contract,coupling));
+            PetieiSampling::independent,contract);
+        compare(actual,reference<Stepper>(x,c,f,contract));
         require(cs.position==6 && fs.position==(contract==PetieiContract::pure_endowment?2u:6u),
                 "Wrong standard RNG consumption.");
         std::vector<Eigen::Vector4d> expanded_c;
@@ -216,13 +214,13 @@ template<class Stepper> void check_reference()
             for(std::size_t j=0;j<3;++j) expanded_c.push_back(sign*c[3*pair+j]);
             for(std::size_t j=0;j<nf;++j) expanded_f.push_back(sign*f[nf*pair+j]);
         }
-        const auto paths=reference<Stepper>(x,expanded_c,expanded_f,contract,coupling);
+        const auto paths=reference<Stepper>(x,expanded_c,expanded_f,contract);
         std::vector<Values> pairs(2);
         for(std::size_t i=0;i<2;++i) for(std::size_t k=0;k<6;++k)
             pairs[i][k]=.5*(paths[2*i][k]+paths[2*i+1][k]);
         CarbonTape ca{c};FinancialTape fa{f};
         const auto anti=P::evaluate(prepared,4,ca,fa,PetieiEstimator::standard,
-            PetieiSampling::antithetic,contract,coupling);
+            PetieiSampling::antithetic,contract);
         require(anti.simulations==4,"Wrong actual antithetic trajectory count.");
         compare(anti,pairs);
     }
@@ -293,7 +291,6 @@ void check_selection_and_validation()
     }
     const auto rejects=[&](auto action) { bool threw=false;try{action();}catch(const std::invalid_argument&){threw=true;}require(threw,"Invalid mode accepted."); };
     rejects([&]{CarbonTape cs{c};FinancialTape fs{f};static_cast<void>(P::evaluate(p,4,cs,fs,static_cast<PetieiEstimator>(9)));});
-    rejects([&]{CarbonTape cs{c};FinancialTape fs{f};static_cast<void>(P::evaluate(p,4,cs,fs,PetieiEstimator::standard,PetieiSampling::antithetic,PetieiContract::all,static_cast<PetieiFundSampling>(9)));});
     rejects([&]{CarbonTape cs{c};static_cast<void>(P::evaluate(p,4,cs,PetieiSampling::antithetic,static_cast<PetieiContract>(9)));});
 }
 }
@@ -305,7 +302,7 @@ int main()
         check_reference<cf::models::GeoOUExactStepper4>();
         check_reference<cf::models::CIRNVStepper4>();
         check_delta_and_endpoint();check_selection_and_validation();
-        std::cout<<"Standard/conditioned estimators, E2/E3, datewise marginals, antithetic means/SEs and deltas passed.\n";
+        std::cout<<"Standard/conditioned estimators, E2/E3, antithetic means/SEs and deltas passed.\n";
         return 0;
     } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}
 }

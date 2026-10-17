@@ -221,7 +221,6 @@ mkdir -p results &&
     --repetitions 3 \
     --seed 20261015 \
     --batches 0 \
-    --fund-sampling path \
     --output-prefix results/paper_path
 ```
 
@@ -237,7 +236,7 @@ At equal actual trajectory count, the reported reduction for price or delta is
 
 The standard row reports `0%`. This definition accounts for the smaller number of independent observations in antithetic mode. A raw path variance and a raw pair-average variance have different sample units and should not be compared directly.
 
-`--batches 0` skips statistical agreement checks. To enable batch-based confidence intervals for price and delta differences, repeat the command with, for example, `--batches 100 --batch-paths 2000`. The optional `--fund-sampling marginals` mode reproduces the legacy datewise financial sampling convention; `path` uses a coherent fund trajectory.
+`--batches 0` skips statistical agreement checks. To enable batch-based confidence intervals for price and delta differences, repeat the command with, for example, `--batches 100 --batch-paths 2000`. Standard TI/EI pricing always uses a coherent sequential fund trajectory. Standalone PE simulates only its terminal financial value after the carbon path; conditioned estimators integrate financial randomness analytically.
 
 The paper-parameter benchmark uses the corrected Makeham constant $\xi=0.0041959$ and the Gompertz exponent $(\text{age}+t-m)/b$. Examples have their own inputs; benchmark results should be interpreted using the parameters saved with each run.
 

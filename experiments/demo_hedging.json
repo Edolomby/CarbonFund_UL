@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "experiment": "hedging",
+  "market": {
+    "risk_free_rate": 0.03,
+    "expected_returns": [
+      0.08,
+      0.1,
+      0.07,
+      0.09
+    ],
+    "volatilities": [
+      0.2,
+      0.25,
+      0.18,
+      0.22
+    ],
+    "correlations": [
+      [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ]
+  },
+  "carbon": {
+    "model": "CIR",
+    "initial": [
+      5.0,
+      4.0,
+      3.0,
+      1.0
+    ],
+    "long_run_mean": [
+      2.5,
+      2.0,
+      1.5,
+      0.5
+    ],
+    "mean_reversion": [
+      0.1,
+      0.1,
+      0.1,
+      0.1
+    ],
+    "volatility": [
+      0.2,
+      0.2,
+      0.2,
+      0.2
+    ]
+  },
+  "fund": {
+    "risk_aversion": 2.0,
+    "carbon_penalty": 0.1
+  },
+  "contract": {
+    "fund_value": 1.2,
+    "maturity": 5.0,
+    "minimum_guarantee": 1.0,
+    "maximum_guarantee": 1.5,
+    "minimum_guarantee_growth_rate": 0.01,
+    "maximum_guarantee_growth_rate": 0.04,
+    "endowment_death_benefit_fraction": 0.8
+  },
+  "mortality": {
+    "xi": 0.0041959,
+    "m": 79.6921211,
+    "b": 11.5818911
+  },
+  "population": [
+    {
+      "type": "PE",
+      "age": 60.0,
+      "notional": 1.0
+    }
+  ],
+  "pricing": {
+    "contract": "PE",
+    "paths": 10000,
+    "intervals": 50,
+    "configurations": [
+      "standard",
+      "standard_antithetic",
+      "conditioned",
+      "conditioned_antithetic"
+    ],
+    "repetitions": 3,
+    "carbon_seed": 20261015,
+    "financial_seed": 20261016
+  },
+  "hedging": {
+    "outer_scenarios": 20,
+    "intervals": 20,
+    "progress_every": 10,
+    "carbon_seed": 2026101601,
+    "financial_seed": 2026101602,
+    "mortality_seed": 2026101603,
+    "initial": {
+      "paths": 512,
+      "intervals": 50,
+      "configuration": "conditioned_antithetic",
+      "carbon_seed": 2026101605,
+      "financial_seed": 2026101607
+    },
+    "revaluation": {
+      "paths": 128,
+      "intervals": 50,
+      "configuration": "conditioned_antithetic",
+      "carbon_seed": 2026101604,
+      "financial_seed": 2026101606
+    }
+  },
+  "analysis": {
+    "normalization": "aggregate",
+    "confidence_level": 0.95,
+    "comparison_family_size": 0,
+    "quantiles": [
+      0.025,
+      0.5,
+      0.9,
+      0.95,
+      0.975,
+      0.99
+    ],
+    "expected_shortfall_levels": [
+      0.95,
+      0.99
+    ],
+    "bins": 70,
+    "zoom": null,
+    "plot_range": null,
+    "figure_formats": [
+      "png",
+      "pdf"
+    ],
+    "dpi": 180,
+    "title": ""
+  },
+  "notes": "Illustrative inputs. This is not a reproduction of the paper's hedging figures."
+}

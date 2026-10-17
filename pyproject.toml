@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "carbonfund-experiments"
+version = "0.1.0"
+description = "Python experiment interface for the CarbonFund_UL C++ library"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.22", "scipy>=1.8", "matplotlib>=3.5"]
+
+[tool.setuptools]
+py-modules = ["carbonfund_experiments"]
+package-dir = {"" = "python"}

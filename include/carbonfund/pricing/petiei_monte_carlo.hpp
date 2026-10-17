@@ -60,10 +60,6 @@ enum class PetieiSampling {
 
 enum class PetieiEstimator { standard, conditioned };
 enum class PetieiContract { all, pure_endowment, term_insurance, endowment_insurance };
-// path implements the sequential fund scheme E2. independent_marginals draws
-// a fresh financial normal for each grid marginal, as in the old TI/EI code.
-// Both have the same pricing expectation but different estimator variances.
-enum class PetieiFundSampling { path, independent_marginals };
 
 namespace detail {
 
@@ -309,19 +305,14 @@ private:
         return increment;
     }
 
-    template<bool Standard, PetieiFundSampling FundSampling>
+    template<bool Standard>
     static void evaluate_date(
         PathState& path, const MinMaxPayoff::Prepared& payoff,
         double increment, double financial_normal)
     {
         if constexpr (Standard) {
-            if constexpr (FundSampling == PetieiFundSampling::path) {
-                path.log_financial_factor += -0.5 * increment +
-                    std::sqrt(increment) * financial_normal;
-            } else {
-                path.log_financial_factor = -0.5 * path.integrated_variance +
-                    std::sqrt(path.integrated_variance) * financial_normal;
-            }
+            path.log_financial_factor += -0.5 * increment +
+                std::sqrt(increment) * financial_normal;
             path.payoff = MinMaxPayoff::evaluate_sample(payoff, path.log_financial_factor);
         } else {
             path.payoff = MinMaxPayoff::evaluate(payoff, path.integrated_variance);
@@ -372,7 +363,7 @@ private:
     }
 
     template<bool Standard, bool Antithetic, PetieiContract Contract,
-             PetieiFundSampling FundSampling, class CarbonStream, class FinancialStream>
+             class CarbonStream, class FinancialStream>
     [[nodiscard]] static PetieiMonteCarloResult evaluate_samples(
         const Prepared& prepared, std::size_t observations,
         CarbonStream& carbon_stream, FinancialStream& financial_stream)
@@ -395,11 +386,11 @@ private:
                 if constexpr (intermediate_payoffs) {
                     double financial = 0.0;
                     if constexpr (Standard) financial = financial_stream.std_normal();
-                    evaluate_date<Standard, FundSampling>(plus, prepared.future_payoffs_[date],
+                    evaluate_date<Standard>(plus, prepared.future_payoffs_[date],
                                                          plus_increment, financial);
                     accumulate_death<Contract>(plus, prepared, date);
                     if constexpr (Antithetic) {
-                        evaluate_date<Standard, FundSampling>(minus, prepared.future_payoffs_[date],
+                        evaluate_date<Standard>(minus, prepared.future_payoffs_[date],
                                                              minus_increment, -financial);
                         accumulate_death<Contract>(minus, prepared, date);
                     }
@@ -409,11 +400,11 @@ private:
                 // PE-only uses E3: one financial normal after the carbon path.
                 double financial = 0.0;
                 if constexpr (Standard) financial = financial_stream.std_normal();
-                evaluate_date<Standard, PetieiFundSampling::independent_marginals>(
-                    plus, prepared.future_payoffs_.back(), 0.0, financial);
+                evaluate_date<Standard>(
+                    plus, prepared.future_payoffs_.back(), plus.integrated_variance, financial);
                 if constexpr (Antithetic) {
-                    evaluate_date<Standard, PetieiFundSampling::independent_marginals>(
-                        minus, prepared.future_payoffs_.back(), 0.0, -financial);
+                    evaluate_date<Standard>(
+                        minus, prepared.future_payoffs_.back(), minus.integrated_variance, -financial);
                 }
             }
             auto value = finish_path<Contract>(plus, prepared);
@@ -435,7 +426,7 @@ private:
                 ei.finish(inverse_df, inverse), observations};
     }
 
-    template<bool Standard, bool Antithetic, PetieiFundSampling FundSampling,
+    template<bool Standard, bool Antithetic,
              class CarbonStream, class FinancialStream>
     [[nodiscard]] static PetieiMonteCarloResult select_contract(
         const Prepared& prepared, std::size_t observations,
@@ -443,22 +434,22 @@ private:
     {
         switch (contract) {
         case PetieiContract::all:
-            return evaluate_samples<Standard, Antithetic, PetieiContract::all, FundSampling>(
+            return evaluate_samples<Standard, Antithetic, PetieiContract::all>(
                 prepared, observations, carbon, financial);
         case PetieiContract::pure_endowment:
-            return evaluate_samples<Standard, Antithetic, PetieiContract::pure_endowment, FundSampling>(
+            return evaluate_samples<Standard, Antithetic, PetieiContract::pure_endowment>(
                 prepared, observations, carbon, financial);
         case PetieiContract::term_insurance:
-            return evaluate_samples<Standard, Antithetic, PetieiContract::term_insurance, FundSampling>(
+            return evaluate_samples<Standard, Antithetic, PetieiContract::term_insurance>(
                 prepared, observations, carbon, financial);
         case PetieiContract::endowment_insurance:
-            return evaluate_samples<Standard, Antithetic, PetieiContract::endowment_insurance, FundSampling>(
+            return evaluate_samples<Standard, Antithetic, PetieiContract::endowment_insurance>(
                 prepared, observations, carbon, financial);
         }
         throw std::invalid_argument("Unknown PETIEI contract selection.");
     }
 
-    template<bool Standard, PetieiFundSampling FundSampling, class CarbonStream, class FinancialStream>
+    template<bool Standard, class CarbonStream, class FinancialStream>
     [[nodiscard]] static PetieiMonteCarloResult select_sampling(
         const Prepared& prepared, std::size_t simulations,
         CarbonStream& carbon, FinancialStream& financial,
@@ -467,13 +458,13 @@ private:
         switch (sampling) {
         case PetieiSampling::independent:
             if (simulations < 2) throw std::invalid_argument("Independent sampling requires at least two trajectories.");
-            return select_contract<Standard, false, FundSampling>(prepared, simulations, carbon, financial, contract);
+            return select_contract<Standard, false>(prepared, simulations, carbon, financial, contract);
         case PetieiSampling::antithetic:
             if (simulations < 3) throw std::invalid_argument("Antithetic sampling requires at least two complete pairs.");
             if (simulations == std::numeric_limits<std::size_t>::max()) {
                 throw std::overflow_error("Rounded antithetic trajectory count overflows.");
             }
-            return select_contract<Standard, true, FundSampling>(
+            return select_contract<Standard, true>(
                 prepared, simulations / 2 + simulations % 2, carbon, financial, contract);
         }
         throw std::invalid_argument("Unknown PETIEI sampling mode.");
@@ -493,7 +484,7 @@ public:
         PetieiContract contract = PetieiContract::all)
     {
         NoFinancialStream unused;
-        return select_sampling<false, PetieiFundSampling::path>(
+        return select_sampling<false>(
             prepared, simulations, carbon, unused, sampling, contract);
     }
 
@@ -501,30 +492,22 @@ public:
     // extra financial draws from altering the carbon paths. FinancialStream must
     // supply std_normal(). It is not advanced by the conditioned estimator.
     // Standard antithetics negate both carbon and financial Gaussian inputs.
-    // PE-only uses E3 for either fund mode. TI/EI path mode uses E2; the optional
-    // independent_marginals mode reproduces the old code's datewise draws.
+    // PE-only uses E3: one financial normal at maturity. TI/EI use the
+    // sequential fund scheme E2 at every required payment date.
     // Caller precondition: all simulated arithmetic remains finite/representable.
     template<class CarbonStream, class FinancialStream>
     [[nodiscard]] static PetieiMonteCarloResult evaluate(
         const Prepared& prepared, std::size_t simulations,
         CarbonStream& carbon, FinancialStream& financial, PetieiEstimator estimator,
         PetieiSampling sampling = PetieiSampling::antithetic,
-        PetieiContract contract = PetieiContract::all,
-        PetieiFundSampling fund_sampling = PetieiFundSampling::path)
+        PetieiContract contract = PetieiContract::all)
     {
         switch (estimator) {
         case PetieiEstimator::conditioned:
             return evaluate(prepared, simulations, carbon, sampling, contract);
         case PetieiEstimator::standard:
-            switch (fund_sampling) {
-            case PetieiFundSampling::path:
-                return select_sampling<true, PetieiFundSampling::path>(
-                    prepared, simulations, carbon, financial, sampling, contract);
-            case PetieiFundSampling::independent_marginals:
-                return select_sampling<true, PetieiFundSampling::independent_marginals>(
-                    prepared, simulations, carbon, financial, sampling, contract);
-            }
-            throw std::invalid_argument("Unknown fund sampling mode.");
+            return select_sampling<true>(
+                prepared, simulations, carbon, financial, sampling, contract);
         }
         throw std::invalid_argument("Unknown PETIEI estimator.");
     }

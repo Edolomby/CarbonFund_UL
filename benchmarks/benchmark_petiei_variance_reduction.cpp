@@ -30,9 +30,8 @@ constexpr std::array<PetieiContract,3> contracts{
     PetieiContract::pure_endowment,PetieiContract::term_insurance,PetieiContract::endowment_insurance};
 constexpr std::array<std::pair<int,int>,6> contrasts{
     std::pair{0,1},{0,2},{0,3},{1,2},{1,3},{2,3}};
-// Two declared fund constructions, four maturities, three contracts, two
-// quantities and six contrasts. Bonferroni also covers a single-construction run.
-constexpr std::size_t confidence_family=2*4*3*2*6;
+// Four maturities, three contracts, two quantities and six contrasts.
+constexpr std::size_t confidence_family=4*3*2*6;
 constexpr std::array<std::array<double,4>,3> paper_standard{{
     {{2.3325e-2,4.2705e-2,3.7802e-2,4.6313e-3}},
     {{6.4640e-6,4.5424e-5,4.2306e-4,1.1124e-3}},
@@ -45,7 +44,6 @@ volatile double checksum=0;
 struct Options {
     std::size_t paths=1000000,repetitions=3,batches=100,batch_paths=10000;
     std::uint64_t seed=20261015;
-    PetieiFundSampling fund=PetieiFundSampling::path;
     std::string prefix="petiei_variance_reduction";
 };
 std::uint64_t mix(std::uint64_t x)
@@ -68,10 +66,6 @@ std::size_t even_paths(std::size_t n)
         throw std::invalid_argument("Trajectory requests must be at least four and round without overflow.");
     return n+n%2;
 }
-const char* fund_name(PetieiFundSampling f)
-{
-    return f==PetieiFundSampling::path?"path":"independent_marginals";
-}
 Options options(int argc,char** argv)
 {
     Options o;
@@ -87,11 +81,6 @@ Options options(int argc,char** argv)
             if(value.empty() || value.find_first_of("\"\\\n\r")!=std::string::npos)
                 throw std::invalid_argument("Output prefix must be a nonempty simple path.");
             o.prefix=value;
-        }
-        else if(name=="--fund-sampling") {
-            if(value=="path") o.fund=PetieiFundSampling::path;
-            else if(value=="marginals") o.fund=PetieiFundSampling::independent_marginals;
-            else throw std::invalid_argument("Fund sampling must be path or marginals.");
         }
         else throw std::invalid_argument("Unknown benchmark option: "+name);
     }
@@ -128,13 +117,13 @@ struct Inputs {
 };
 struct Measurement { PetieiContractEstimate estimate; double cpu; std::size_t paths,observations; };
 Measurement run(const Pricer::Prepared& p,std::size_t paths,std::uint64_t seed,
-                int mode,int contract,PetieiFundSampling fund)
+                int mode,int contract)
 {
     cf::random::SimulationRng carbon{mix(seed^UINT64_C(0x434152424f4e))};
     cf::random::SimulationRng financial{mix(seed^UINT64_C(0x46494e414e4345))};
     const auto sampling=(mode%2)?PetieiSampling::antithetic:PetieiSampling::independent;
     const auto begin=std::clock();
-    const auto r=mode<2?Pricer::evaluate(p,paths,carbon,financial,PetieiEstimator::standard,sampling,contracts[contract],fund)
+    const auto r=mode<2?Pricer::evaluate(p,paths,carbon,financial,PetieiEstimator::standard,sampling,contracts[contract])
                        :Pricer::evaluate(p,paths,carbon,sampling,contracts[contract]);
     const auto e=contract==0?r.pure_endowment:contract==1?r.term_insurance:r.endowment_insurance;
     checksum=e.price.mean+e.delta.mean;
@@ -169,19 +158,19 @@ void print_summary_table(
     const std::array<std::vector<double>, 4>& timings)
 {
     std::vector<std::string> configurations;
-    std::vector<std::string> price_reductions, delta_reductions;
+    std::vector<std::string> price_reductions, delta_reductions, cpu_seconds;
     std::vector<double> prices, price_variances, price_errors;
-    std::vector<double> deltas, delta_variances, delta_errors, cpu_seconds;
+    std::vector<double> deltas, delta_variances, delta_errors;
 
     // Equal trajectory counts: compare variances of the estimated means.
     // This accounts for the smaller number of independent antithetic pairs.
     const auto reduction_percent = [](double se, double reference_se, bool baseline) {
-        if (baseline) return std::string{"0%"};
+        if (baseline) return std::string{"0.0000%"};
         const double reference_variance = reference_se * reference_se;
         if (reference_variance == 0.0) return std::string{"n/a"};
         const double reduction = 100.0 * (1.0 - se * se / reference_variance);
         return cf::utils::toString(reduction,
-            cf::utils::TableConfig{cf::utils::FloatFormat::Fixed, 6}) + "%";
+            cf::utils::TableConfig{cf::utils::FloatFormat::Fixed, 4}) + "%";
     };
 
     for (std::size_t mode = 0; mode < results.size(); ++mode) {
@@ -199,11 +188,13 @@ void print_summary_table(
             estimate.delta.standard_error,
             results[0].estimate.delta.standard_error, mode == 0));
         delta_errors.push_back(estimate.delta.standard_error);
-        cpu_seconds.push_back(median(timings[mode]));
+        cpu_seconds.push_back(cf::utils::toString(
+            median(timings[mode]),
+            cf::utils::TableConfig{cf::utils::FloatFormat::Fixed, 4}));
     }
 
     cf::utils::printVectors(
-        cf::utils::TableConfig{cf::utils::FloatFormat::Default, 10},
+        cf::utils::TableConfig{cf::utils::FloatFormat::Scientific, 4},
         {"Configuration", "Price", "Price variance", "Price VR (%)", "Price SE",
          "Delta", "Delta variance", "Delta VR (%)", "Delta SE", "CPU (s)"},
         configurations, prices, price_variances, price_reductions, price_errors,
@@ -220,13 +211,13 @@ struct Outputs {
             if(!*s) throw std::runtime_error("Cannot create benchmark output files.");
             *s<<std::setprecision(17);
         }
-        summary<<"fund_sampling,T,N,contract,configuration,quantity,requested_paths,actual_paths,independent_samples,mean,sample_variance,standard_error,ci95_lower,ci95_upper,effective_variance,variance_reduction_pct,se_gain,cpu_seconds,cpu_times_se_squared,efficiency_vs_standard,seed\n";
-        timings<<"fund_sampling,T,contract,repetition,configuration,paths,cpu_seconds,seed\n";
-        reference<<"fund_sampling,T,contract,estimator,observed_variance,table_e1_variance,relative_difference_pct\n";
-        batches<<"fund_sampling,T,contract,batch,configuration,quantity,paths,mean,standard_error,seed\n";
-        agreement<<"fund_sampling,T,contract,quantity,comparison,batches,paths,mean_a,mean_b,mean_difference,difference_se,t_statistic,ci95_lower,ci95_upper,zero_in_ci95,simultaneous_family_size,simultaneous95_lower,simultaneous95_upper,zero_in_simultaneous95\n";
-        main_agreement<<"fund_sampling,T,contract,quantity,comparison,actual_paths,calibration_batches,calibration_paths,mean_a,mean_b,mean_difference,difference_se,t_statistic,ci95_lower,ci95_upper,zero_in_ci95,simultaneous_family_size,simultaneous95_lower,simultaneous95_upper,zero_in_simultaneous95\n";
-        calibration<<"fund_sampling,T,contract,configuration,quantity,batches,paths,grand_mean,rms_reported_se,observed_batch_sd,observed_over_reported\n";
+        summary<<"T,N,contract,configuration,quantity,requested_paths,actual_paths,independent_samples,mean,sample_variance,standard_error,ci95_lower,ci95_upper,effective_variance,variance_reduction_pct,se_gain,cpu_seconds,cpu_times_se_squared,efficiency_vs_standard,seed\n";
+        timings<<"T,contract,repetition,configuration,paths,cpu_seconds,seed\n";
+        reference<<"T,contract,estimator,observed_variance,table_e1_variance,relative_difference_pct\n";
+        batches<<"T,contract,batch,configuration,quantity,paths,mean,standard_error,seed\n";
+        agreement<<"T,contract,quantity,comparison,batches,paths,mean_a,mean_b,mean_difference,difference_se,t_statistic,ci95_lower,ci95_upper,zero_in_ci95,simultaneous_family_size,simultaneous95_lower,simultaneous95_upper,zero_in_simultaneous95\n";
+        main_agreement<<"T,contract,quantity,comparison,actual_paths,calibration_batches,calibration_paths,mean_a,mean_b,mean_difference,difference_se,t_statistic,ci95_lower,ci95_upper,zero_in_ci95,simultaneous_family_size,simultaneous95_lower,simultaneous95_upper,zero_in_simultaneous95\n";
+        calibration<<"T,contract,configuration,quantity,batches,paths,grand_mean,rms_reported_se,observed_batch_sd,observed_over_reported\n";
     }
 };
 struct Counts {std::size_t total=0,individual_misses=0,simultaneous_misses=0;};
@@ -240,11 +231,11 @@ void validate(const Options& o,const Pricer::Prepared& p,int ti,int ci,std::uint
     for(std::size_t batch=0;batch<o.batches;++batch) {
         const auto seed=mix(tag^UINT64_C(0x56414c4944415445)^static_cast<std::uint64_t>(batch));
         for(int mode=0;mode<4;++mode) {
-            const auto r=run(p,paths,seed,mode,ci,o.fund);
+            const auto r=run(p,paths,seed,mode,ci);
             const std::array<MonteCarloEstimate,2> e{r.estimate.price,r.estimate.delta};
             for(int q=0;q<2;++q) {
                 values[mode][q].push_back(e[q].mean);errors[mode][q].push_back(e[q].standard_error);
-                output.batches<<fund_name(o.fund)<<','<<maturities[ti]<<','<<contract_names[ci]<<','<<batch<<','
+                output.batches<<maturities[ti]<<','<<contract_names[ci]<<','<<batch<<','
                     <<mode_names[mode]<<','<<(q?"delta":"price")<<','<<paths<<','<<e[q].mean<<','<<e[q].standard_error<<','<<seed<<'\n';
             }
         }
@@ -255,7 +246,7 @@ void validate(const Options& o,const Pricer::Prepared& p,int ti,int ci,std::uint
     for(int q=0;q<2;++q) {
         for(int mode=0;mode<4;++mode) {
             const double reported=rms(errors[mode][q]),observed=std::sqrt(variance(values[mode][q]));
-            output.calibration<<fund_name(o.fund)<<','<<maturities[ti]<<','<<contract_names[ci]<<','<<mode_names[mode]<<','
+            output.calibration<<maturities[ti]<<','<<contract_names[ci]<<','<<mode_names[mode]<<','
                 <<(q?"delta":"price")<<','<<o.batches<<','<<paths<<','<<mean(values[mode][q])<<','
                 <<reported<<','<<observed<<','<<(reported>0?observed/reported:0)<<'\n';
         }
@@ -267,7 +258,7 @@ void validate(const Options& o,const Pricer::Prepared& p,int ti,int ci,std::uint
             const double slo=difference-simultaneous*se,shi=difference+simultaneous*se;
             const bool zero=lo<=0 && 0<=hi,szero=slo<=0 && 0<=shi;
             ++counts.total;counts.individual_misses+=!zero;counts.simultaneous_misses+=!szero;
-            output.agreement<<fund_name(o.fund)<<','<<maturities[ti]<<','<<contract_names[ci]<<','<<(q?"delta":"price")<<','
+            output.agreement<<maturities[ti]<<','<<contract_names[ci]<<','<<(q?"delta":"price")<<','
                 <<mode_names[a]<<'-'<<mode_names[b]<<','<<o.batches<<','<<paths<<','<<mean(values[a][q])<<','<<mean(values[b][q])<<','
                 <<difference<<','<<se<<','<<(se>0?difference/se:0)<<','<<lo<<','<<hi<<','<<zero<<','<<confidence_family<<','<<slo<<','<<shi<<','<<szero<<'\n';
             // Covariance-aware CI for the main equal-budget estimates. The
@@ -281,7 +272,7 @@ void validate(const Options& o,const Pricer::Prepared& p,int ti,int ci,std::uint
             const double msl=main_difference-simultaneous*main_se,msh=main_difference+simultaneous*main_se;
             const bool mz=ml<=0 && 0<=mh,msz=msl<=0 && 0<=msh;
             ++main_counts.total;main_counts.individual_misses+=!mz;main_counts.simultaneous_misses+=!msz;
-            output.main_agreement<<fund_name(o.fund)<<','<<maturities[ti]<<','<<contract_names[ci]<<','<<(q?"delta":"price")<<','
+            output.main_agreement<<maturities[ti]<<','<<contract_names[ci]<<','<<(q?"delta":"price")<<','
                 <<mode_names[a]<<'-'<<mode_names[b]<<','<<main_results[a].paths<<','<<o.batches<<','<<paths<<','
                 <<main_a<<','<<main_b<<','<<main_difference<<','<<main_se<<','<<(main_se>0?main_difference/main_se:0)<<','
                 <<ml<<','<<mh<<','<<mz<<','<<confidence_family<<','<<msl<<','<<msh<<','<<msz<<'\n';
@@ -308,7 +299,7 @@ void metadata(const Options& o)
        <<"  \"carbon_volatility\": [3,3,3,3],\n  \"asset_returns\": [0.25,0.15,0.1,0.08],\n"
        <<"  \"asset_volatility\": [0.3,0.25,0.2,0.16],\n"
        <<"  \"correlation\": [[1,0.44,0.39,0.32],[0.44,1,0.3,0.33],[0.39,0.3,1,0.31],[0.32,0.33,0.31,1]],\n"
-       <<"  \"fund_sampling\": \""<<fund_name(o.fund)<<"\",\n  \"rng\": \"Boost xoshiro256pp + Ziggurat\",\n"
+       <<"  \"rng\": \"Boost xoshiro256pp + Ziggurat\",\n"
        <<"  \"requested_paths\": "<<o.paths<<",\n  \"actual_paths\": "<<even_paths(o.paths)<<",\n"
        <<"  \"timing_repetitions\": "<<o.repetitions<<",\n  \"validation_batches\": "<<o.batches<<",\n"
        <<"  \"validation_paths\": "<<(o.batches?even_paths(o.batch_paths):0)<<",\n  \"seed\": "<<o.seed<<",\n"
@@ -321,13 +312,13 @@ int main(int argc,char** argv)
     try {
         if(argc==2 && std::string_view(argv[1])=="--help") {
             std::cout<<"Options (each requires a value): --paths 1000000 --repetitions 3 --seed 20261015 "
-                       "--batches 100 --batch-paths 10000 --fund-sampling path|marginals --output-prefix PATH\n";
+                       "--batches 100 --batch-paths 10000 --output-prefix PATH\n";
             return 0;
         }
         const auto o=options(argc,argv);const auto paths=even_paths(o.paths);
         Outputs output(o.prefix);metadata(o);Counts counts,main_counts;
         std::cout<<"Paper experiment: xi=0.0041959, exponent=(age+t-m)/b, CIR NV, N=5T, "
-                 <<paths<<" actual trajectories per configuration; fund="<<fund_name(o.fund)<<".\n"
+                 <<paths<<" actual trajectories per configuration; sequential TI/EI fund paths; PE terminal draw.\n"
                  <<"Individual 95% and simultaneous 95% intervals use a declared family of "<<confidence_family<<" comparisons.\n"<<std::flush;
         const boost::math::students_t_distribution<double> individual_t(paths-1),paired_t(paths/2-1);
         for(int ti=0;ti<4;++ti) {
@@ -335,17 +326,17 @@ int main(int argc,char** argv)
             for(int ci=0;ci<3;++ci) {
                 const auto tag=mix(o.seed^(static_cast<std::uint64_t>(ti+1)<<48)^
                     (static_cast<std::uint64_t>(ci+1)<<40));
-                for(int mode=0;mode<4;++mode) static_cast<void>(run(prepared,std::min(paths,std::size_t{1000}),tag,mode,ci,o.fund));
+                for(int mode=0;mode<4;++mode) static_cast<void>(run(prepared,std::min(paths,std::size_t{1000}),tag,mode,ci));
                 std::array<Measurement,4> first{};
                 std::array<std::vector<double>,4> times;
                 for(std::size_t repetition=0;repetition<o.repetitions;++repetition) {
                     const auto seed=mix(tag^static_cast<std::uint64_t>(repetition));
                     for(int order=0;order<4;++order) {
                         const int mode=static_cast<int>((order+repetition)%4);
-                        const auto result=run(prepared,paths,seed,mode,ci,o.fund);
+                        const auto result=run(prepared,paths,seed,mode,ci);
                         times[mode].push_back(result.cpu);
                         if(repetition==0) first[mode]=result;
-                        output.timings<<fund_name(o.fund)<<','<<maturities[ti]<<','<<contract_names[ci]<<','<<repetition<<','
+                        output.timings<<maturities[ti]<<','<<contract_names[ci]<<','<<repetition<<','
                             <<mode_names[mode]<<','<<paths<<','<<result.cpu<<','<<seed<<'\n';
                     }
                 }
@@ -360,7 +351,7 @@ int main(int argc,char** argv)
                     for(int q=0;q<2;++q) {
                         const double se2=e[q].standard_error*e[q].standard_error;
                         const double base_se2=base[q].standard_error*base[q].standard_error;
-                        output.summary<<fund_name(o.fund)<<','<<maturities[ti]<<','<<5*maturities[ti]<<','<<contract_names[ci]<<','
+                        output.summary<<maturities[ti]<<','<<5*maturities[ti]<<','<<contract_names[ci]<<','
                             <<mode_names[mode]<<','<<(q?"delta":"price")<<','<<o.paths<<','<<paths<<','<<first[mode].observations<<','
                             <<e[q].mean<<','<<e[q].sample_variance<<','<<e[q].standard_error<<','
                             <<e[q].mean-critical*e[q].standard_error<<','<<e[q].mean+critical*e[q].standard_error<<','
@@ -375,7 +366,7 @@ int main(int argc,char** argv)
                     }
                     if(mode==0 || mode==2) {
                         const double reference=mode==0?paper_standard[ci][ti]:paper_conditioned[ci][ti];
-                        output.reference<<fund_name(o.fund)<<','<<maturities[ti]<<','<<contract_names[ci]<<','<<mode_names[mode]<<','
+                        output.reference<<maturities[ti]<<','<<contract_names[ci]<<','<<mode_names[mode]<<','
                             <<e[0].sample_variance<<','<<reference<<','<<100*(e[0].sample_variance/reference-1)<<'\n';
                     }
                 }

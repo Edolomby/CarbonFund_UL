@@ -69,6 +69,9 @@ target_link_libraries(example_policyholders PRIVATE CarbonFund::carbonfund)
 add_executable(example_petiei_hedging examples/petiei_hedging.cpp)
 target_link_libraries(example_petiei_hedging PRIVATE CarbonFund::carbonfund)
 
+add_executable(carbonfund_experiment examples/run_experiment.cpp)
+target_link_libraries(carbonfund_experiment PRIVATE CarbonFund::carbonfund)
+
 
 # ==============================================================================
 # 4. Automated tests
