@@ -85,3 +85,7 @@ __pycache__/
 # Generated benchmark outputs
 /paper_path_*.csv
 /paper_path_*.json
+
+.ipynb_checkpoints/
+
+*.egg-info/
