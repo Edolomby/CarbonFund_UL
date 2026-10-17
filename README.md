@@ -1,483 +1,280 @@
 # CarbonFund_UL
 
-Monte Carlo pricing and fund deltas for insurance contracts with carbon-sensitive investment strategies.
+**Pricing and risk-minimizing hedging of life insurance portfolios linked to a fund with carbon preferences.**
 
-The current library prices three contract types:
+CarbonFund_UL is a C++20 research library for studying the risks faced by an insurer issuing unit-linked life insurance contracts. The policy benefits depend on an investment fund whose allocation responds to the carbon intensity of the firms in which it invests.
+
+The central question is how effectively the insurer can hedge this portfolio when financial risk is tradable, while carbon intensity and policyholder mortality introduce additional, non-traded risks. The library connects fund construction, insurance valuation and hedging simulation so that their effects can be studied together.
+
+It implements numerical building blocks from *Carbon-Sensitive Fund Construction and Hedging for Green Unit-Linked Life Insurance* and its supplementary material, together with antithetic sampling, individual policyholder bookkeeping and tools for comparing hedging-cost distributions.
+
+## What the library is designed to investigate
+
+- How carbon preferences change investment allocations and the fund underlying the insurance benefits.
+- How guarantees, mortality, ages and notionals affect portfolio prices and hedge positions.
+- How dynamic hedging compares with an initial-delta strategy and with holding the premium in cash.
+- How pooling independent policyholders reduces the relative effect of individual mortality risk, while financial and carbon scenarios remain common to the portfolio.
+- How conditioning and antithetic variables reduce the computational effort needed to estimate prices and deltas accurately.
+
+Two different variances matter in these experiments. **Estimator variance** measures Monte Carlo uncertainty in a computed price or delta. **Hedging-cost variance** measures the insurer's residual risk across realized scenarios. The pricing benchmarks study the first; the hedging engine and Python analysis study the second.
+
+## The underlying fund and its carbon preferences
+
+The current implementation uses four risky assets and a risk-free account. Each firm has a stochastic carbon-intensity factor. The fund's risky-asset weights solve
+
+$$
+\left[\delta A+\alpha\,\operatorname{diag}
+\left(A_{11}C_1^+,\ldots,A_{44}C_4^+\right)\right]\pi^*(C)
+=\mu-r\mathbf{1},
+\qquad C_i^+=\max(C_i,0).
+$$
+
+Here, $A$ is the asset-return covariance matrix, $\delta$ is risk aversion, and $\alpha$ controls the carbon penalty. These correspond to `covariance`, `risk_aversion` and `carbon_penalty` in `CarbonAllocationParameters4`. The remaining wealth is allocated to the risk-free account. Setting the penalty to zero recovers the corresponding allocation without carbon preferences.
+
+Carbon preferences therefore enter the allocation rule itself. They change the fund's exposures and, through the fund, the insurer's liabilities and hedge positions.
+
+The available carbon models are:
+
+| Model | Implementation |
+|---|---|
+| Ornstein-Uhlenbeck | Exact transitions for the carbon factors. |
+| Geometric Ornstein-Uhlenbeck | Exact transitions in log carbon intensity. |
+| Cox-Ingersoll-Ross | Ninomiya-Victoir splitting scheme. |
+
+The CIR scheme requires $\kappa_i\bar C_i\geq\sigma_i^2/4$. Carbon-path simulation and integration of the fund's variance remain separate numerical steps, including when the carbon transitions are exact.
+
+## The insurer's portfolio
+
+The library supports three contract types, abbreviated PE, TI and EI:
 
 | Contract | Benefit |
 |---|---|
-| Pure endowment (PE) | A benefit at maturity if the policyholder survives. |
-| Term insurance (TI) | A benefit on death before maturity. |
-| Endowment insurance (EI) | A death benefit before maturity and a survival benefit at maturity. |
+| Pure endowment (PE) | Pays at maturity if the policyholder survives. |
+| Term insurance (TI) | Pays on death before maturity. |
+| Endowment insurance (EI) | Combines a survival benefit with a death benefit, optionally scaled by a contractual fraction. |
 
-Benefits use a fund payoff with a minimum guarantee and a maximum guarantee. The investment allocation depends on four carbon factors.
+Benefits use a fund payoff with a minimum guarantee and an upper cap:
 
-The serial pricer supports standard Monte Carlo and conditional Monte Carlo, each with independent or antithetic sampling. Conditional Monte Carlo with antithetic carbon trajectories is the default. Mortality is integrated analytically in both estimators. It returns portfolio prices, fund deltas, sample variances and standard errors. The outer simulation of policyholder deaths, hedge rebalancing and trading gains is a subsequent layer; it is not implemented in this pricer.
+$$
+H(t,x)=\min\!\left(\max(x,L(t)),U(t)\right),
+\qquad
+L(t)=L_0e^{g_Lt},\quad U(t)=U_0e^{g_Ut}.
+$$
 
-## Installation and build
+The payoff is expressed per unit of policy notional. Prices and deltas returned for a portfolio already include its notionals, mortality weights and discounting.
 
-See [INSTALLATION.md](INSTALLATION.md) for dependencies, platform setup, build commands, automated tests and Release builds.
+Two representations serve different purposes:
 
-## Example 1: price PE, TI and EI portfolios
+- `CohortBook` groups living policies by age and aggregate notional for valuation. Policies in a cohort may have different individual notionals.
+- `PolicyholderPopulation` retains individual ages, notionals, contract types and survival states for realized deaths and benefit payments during hedging.
 
-The following complete program is provided in `examples/petiei_monte_carlo.cpp` and is built as `example_petiei_monte_carlo`.
+Mortality follows a deterministic Gompertz-Makeham law, independently of financial and carbon risk. Individual lifetimes are independent in the population simulation. A pricing preparation uses common fund and contract terms; books with different terms require separate preparations.
 
-```cpp
-#include <carbonfund/pricing/petiei_monte_carlo.hpp>
-#include <carbonfund/random/simulation_rng.hpp>
-#include <TablePrinter.hpp>
+## Hedging in an incomplete market
 
-#include <string>
-#include <vector>
+The paper uses local risk-minimization and the Föllmer-Schweizer decomposition to identify the tradable financial exposure and the residual cost arising from unspanned risks. The numerical objective is to approximate this hedge and examine its performance on portfolios of policies.
 
-int main()
-{
-    using namespace carbonfund;
-    using Pricer = pricing::PetieiMonteCarloPricer4<models::OUExactStepper4>;
+Valuation uses the **minimal martingale measure**: the fund's financial drift becomes the risk-free rate, while the carbon and mortality laws are unchanged under the independence assumptions. The asset expected returns still enter the fund's allocation rule.
 
-    const contracts::CohortBook pe{{{60.0, 100000.0}}};
-    const contracts::CohortBook ti{{{60.0, 100000.0}}};
-    const contracts::CohortBook ei{{{60.0, 100000.0}}};
-    const contracts::PetieiPortfolioView portfolio{
-        pe.cohorts(), ti.cohorts(), ei.cohorts()};
+The hedge is expressed in fund units through the portfolio delta
 
-    const mortality::GompertzMakeham mortality{
-        {0.00279, 79.6921211, 1.0 / 11.5818911}};
+$$
+\Delta_t=\frac{\partial V}{\partial x}
+\left(t,X_t,C_t,\text{living portfolio}\right).
+$$
 
-    pricing::PetieiMonteCarloParameters contract;
-    contract.fund_value = 1.0;
-    contract.minimum_guarantee = 1.0;
-    contract.maximum_guarantee = 1.0;
-    contract.minimum_guarantee_growth_rate = 0.0;
-    contract.maximum_guarantee_growth_rate = 0.05;
-    contract.endowment_death_benefit_fraction = 1.0;
-    contract.time_to_maturity = 5.0;
-    contract.time_intervals = 60;
+Holding $\Delta_t$ units of the fund gives risky-asset exposures $\Delta_t X_t\pi_i^*(C_t)$. The hedge account also holds cash. As time passes, valuation uses the observed fund and carbon state, the remaining maturity, the evolved contractual guarantees and the surviving policyholders.
 
-    const Eigen::Vector4d current_carbon{1.0, 1.2, 0.8, 1.1};
-    models::OUParameters4 carbon;
-    carbon.long_run_mean = current_carbon;
-    carbon.mean_reversion.setConstant(0.5);
-    carbon.volatility.setConstant(0.2);
+The engine compares three strategies on the **same market path and realized deaths**, starting from the same initial premium:
 
-    portfolio::CarbonAllocationParameters4 allocation;
-    allocation.risk_free_rate = 0.03;
-    allocation.risk_aversion = 2.0;
-    allocation.carbon_penalty = 1.0;
-    allocation.expected_returns << 0.06, 0.08, 0.07, 0.09;
-    allocation.covariance =
-        Eigen::Vector4d{0.04, 0.06, 0.05, 0.08}.asDiagonal();
-
-    const auto prepared = Pricer::prepare(
-        contract, current_carbon, carbon, allocation, portfolio, mortality);
-
-    random::SimulationRng rng{20261011};
-    const auto result = Pricer::evaluate(prepared, 1000, rng);
-
-    const std::vector<std::string> names{"PE", "TI", "EI"};
-    std::vector<double> prices, price_errors, deltas, delta_errors;
-    for (const auto& value : {result.pure_endowment, result.term_insurance,
-                              result.endowment_insurance}) {
-        prices.push_back(value.price.mean);
-        price_errors.push_back(value.price.standard_error);
-        deltas.push_back(value.delta.mean);
-        delta_errors.push_back(value.delta.standard_error);
-    }
-    utils::printVectors(
-        utils::TableConfig{utils::FloatFormat::Fixed, 6},
-        {"Contract", "Price", "Price SE", "Delta", "Delta SE"},
-        names, prices, price_errors, deltas, delta_errors);
-}
-```
-
-The example uses one age-60 cohort of total notional 100,000 for each contract type. These are three separate example portfolios. The fund and guarantees are expressed per unit of policy notional.
-
-The mortality parameters are annual quantities. `gompertz_growth_rate` is the reciprocal of the scale used in the earlier Gompertz-Makeham parameterization.
-
-With the validated configuration and the default antithetic sampling, the output is:
-
-```text
-+----------+--------------+----------+--------------+----------+
-| Contract | Price        | Price SE | Delta        | Delta SE |
-+----------+--------------+----------+--------------+----------+
-| PE       | 87255.417096 | 0.161860 | 30234.971655 | 2.487991 |
-| TI       | 10509.258869 | 0.007455 | 2520.084926  | 0.167233 |
-| EI       | 97764.675965 | 0.168755 | 32755.056581 | 2.635167 |
-+----------+--------------+----------+--------------+----------+
-```
-
-These are results for the illustrative inputs above. Last digits can differ across compiler and dependency versions.
-
-Console tables use `utils/TablePrinter.hpp`, available as `<TablePrinter.hpp>` to targets linked with `CarbonFund::carbonfund`. Pass a `TableConfig` to choose default, fixed or scientific floating-point formatting and precision. `SE` denotes standard error. The examples and benchmarks use this utility for result tables; progress messages and errors remain plain text.
-
-### Read the results
-
-Each contract estimate contains a `price` and a `delta`, both with these fields:
-
-| Field | Meaning |
+| Strategy | Fund position |
 |---|---|
-| `mean` | Estimated discounted portfolio price or its fund delta. |
-| `sample_variance` | Unbiased variance of one independent observation: a pair mean in antithetic mode, or one path contribution in independent mode. |
-| `standard_error` | Estimated Monte Carlo uncertainty of the mean: `sqrt(sample_variance / result.independent_samples)`. |
+| No hedge | Zero fund units; the premium is held in the cash account. |
+| Mortality-adjusted static hedge | Initial aggregate deltas, scaled by the surviving-notional ratio within each contract type. No market-based repricing. |
+| Dynamic hedge | Aggregate delta recalculated from the current state and living portfolio at each rebalancing date. |
 
-The result also reports `simulations`, the actual number of trajectories, and `independent_samples`, the number of observations used in the statistics. Example 1 evaluates 1,000 trajectories grouped into 500 independent pairs.
+The static strategy is an explicitly defined benchmark. Its mortality adjustment also applies to portfolios with heterogeneous ages and notionals; it does not recompute cohort-specific deltas.
 
-For example, the PE portfolio price is approximately 87,255.42. Its delta is
+All reported costs are **discounted to time zero**, with positive values meaning additional funding required:
 
 $$
-\Delta_{PE}=\frac{\partial\,\text{price}_{PE}}{\partial X_0}.
+\text{cost}
+=\sum_{k=1}^{K}e^{-rt_k}D_k-V_0
+-\sum_{k=1}^{K}\theta_{k-1}
+\left(e^{-rt_k}X_{t_k}-e^{-rt_{k-1}}X_{t_{k-1}}\right).
 $$
 
-A small increase of the current fund value from 1.00 to 1.01 changes the PE price by approximately `30234.971655 * 0.01 = 302.35`, with guarantees and other valuation inputs held fixed. The derivative is with respect to the fund normalization used in `fund_value`; hedge quantities must use that same normalization.
+Here, $D_k$ is the benefit paid at a settlement date, $V_0$ is the initial premium and $\theta_{k-1}$ is the fund holding over the preceding interval. Dynamic capital additions and withdrawals are recorded at their discounted values. A negative cost is a net surplus.
 
-Use the values directly in an application:
+Dynamic hedging targets the financial exposure; carbon and mortality risk still contribute to residual costs. Its numerical performance is assessed from the resulting distributions, together with the effects of rebalancing frequency and pricing accuracy.
 
-```cpp
-const double ei_price = result.endowment_insurance.price.mean;
-const double ei_delta = result.endowment_insurance.delta.mean;
-const double ei_price_se = result.endowment_insurance.price.standard_error;
-```
+## Efficient pricing and delta estimation
 
-The PETIEI prices already include mortality, aggregate notional and discounting. The PETIEI deltas already include those same weights.
+Conditional on a carbon path, the allocation path is known and the fund has a lognormal conditional distribution at each payment date. Its integrated variance is determined by that allocation. This allows the min/max payoff and its fund derivative to be evaluated analytically, as developed in Section E of the supplementary material.
 
-In this example, the identical cohorts and EI death-benefit fraction of one imply `EI price = PE price + TI price`, and likewise for delta. EI combines death and maturity benefits on each trajectory, then averages complete antithetic contributions before estimating variance. This retains the covariance between both benefits and between the paired trajectories.
+The pricer integrates mortality analytically in both estimator families:
 
-Standard error measures Monte Carlo sampling uncertainty. Time-grid error in carbon/variance integration and mortality quadrature is separate. Increasing the path count by a factor of four should approximately halve standard error; refining the time grid addresses discretization error.
+| Configuration | Financial noise | Sampling |
+|---|---|---|
+| `standard` | Simulated | Independent trajectories |
+| `standard_antithetic` | Simulated | Antithetic trajectory pairs |
+| `conditioned` | Integrated analytically | Independent carbon trajectories |
+| `conditioned_antithetic` | Integrated analytically | Antithetic carbon pairs |
 
-Integrated fund variance describes the conditional financial distribution along one carbon path. `price.sample_variance` and `delta.sample_variance` describe variation across independent observations of the Monte Carlo estimator; they are different quantities.
+Conditioned antithetic pricing is the default. At each carbon step, a four-dimensional Gaussian vector $Z$ drives one trajectory and $-Z$ drives its partner. Each trajectory is advanced through its own model transition, so pairing works for OU, GeoOU and CIR without an OU reflection identity. Standard antithetic sampling also negates the financial Gaussian inputs.
 
-## Example 2: several cohorts, or one contract type
+An antithetic pair contributes **one pair average** to the statistics. `sample_variance` is the variance of these independent observations, and
 
-Replace the cohort declarations in Example 1 to price different ages and notionals:
+$$
+\operatorname{SE}(\widehat V)=\sqrt{s^2/n},
+$$
 
-```cpp
-const contracts::CohortBook pe{
-    {{55.0, 120000.0}, {60.0, 80000.0}}};
-const contracts::CohortBook ti{
-    {{60.0, 90000.0}, {70.0, 110000.0}}};
-const contracts::CohortBook ei{
-    {{62.0, 250000.0}}};
-const contracts::PetieiPortfolioView portfolio{
-    pe.cohorts(), ti.cohorts(), ei.cohorts()};
-```
+where $n$ is the number of independent paths or pairs. The same convention applies to delta. Odd antithetic requests round up to the next even trajectory count.
 
-A cohort stores current age and the aggregate notional of living policyholders sharing the same pricing terms and mortality law. Individual notionals can differ: only their sum is needed for this valuation. A book stores aggregate rows; it does not track individual deaths.
+Conditioning preserves the expectation of the discretized estimator and reduces its variance. The benefit from antithetic sampling is measured by the benchmarks. Increasing the path count controls sampling uncertainty; refining the time grid addresses discretization error.
 
-To price only EI, use empty books for PE and TI:
+## Build and run
 
-```cpp
-const contracts::CohortBook pe;
-const contracts::CohortBook ti;
-const contracts::CohortBook ei{{{60.0, 100000.0}}};
-const contracts::PetieiPortfolioView portfolio{
-    pe.cohorts(), ti.cohorts(), ei.cohorts()};
-```
+The library is header-only and requires C++20, CMake 3.22 or newer, Eigen 3.4 and Boost 1.88 or newer. Boost 1.90 is supported. See [INSTALLATION.md](INSTALLATION.md) for dependency installation and platform-specific instructions.
 
-`PetieiPortfolioView` borrows read-only spans from the books. Keep the books alive while calling `prepare()`. The prepared pricer owns the resulting valuation data and does not retain those spans.
-
-One preparation uses common fund, guarantee and investment parameters for the three contract books. Portfolios with different contract terms need separate preparations.
-
-## Example 3: choose GeoOU or CIR carbon dynamics
-
-The model is selected at compile time. To use GeoOU, replace the pricer alias and carbon-parameter block in Example 1 with:
-
-```cpp
-using Pricer = pricing::PetieiMonteCarloPricer4<models::GeoOUExactStepper4>;
-
-models::GeoOUParameters4 carbon;
-carbon.long_run_log_mean = current_carbon.array().log().matrix();
-carbon.mean_reversion.setConstant(0.5);
-carbon.volatility.setConstant(0.2);
-```
-
-GeoOU evolves `log(Y)`. Its initial carbon state must be positive, and `long_run_log_mean` is a mean in log space.
-
-For CIR:
-
-```cpp
-using Pricer = pricing::PetieiMonteCarloPricer4<models::CIRNVStepper4>;
-
-models::CIRParameters4 carbon;
-carbon.long_run_mean = current_carbon;
-carbon.mean_reversion.setConstant(0.5);
-carbon.volatility.setConstant(0.2);
-```
-
-CIR uses the Ninomiya-Victoir split. Its initial state must be nonnegative and each factor must satisfy `kappa * long_run_mean >= volatility^2 / 4`. OU and GeoOU have exact transitions; CIR NV is an approximation. All three still use a time grid for the integrated fund variance and death-benefit quadrature.
-
-## Example 4: a single financial payoff and delta
-
-`MinMaxPayoff` is the underlying financial kernel. It accepts integrated variance for one future payment date and returns an undiscounted conditional expected payoff and fund delta per unit of notional.
-
-Save this complete additional example as `examples/min_max_cashflow.cpp`:
-
-```cpp
-#include <carbonfund/pricing/min_max_payoff.hpp>
-
-#include <cmath>
-#include <iomanip>
-#include <iostream>
-
-int main()
-{
-    using carbonfund::pricing::MinMaxPayoff;
-
-    const double rate = 0.03;
-    const double payment_time = 5.0;
-    const double integrated_variance = 0.1;
-
-    const auto prepared = MinMaxPayoff::prepare({
-        1.0,                              // Current fund value.
-        std::exp(rate * payment_time),    // Risk-free growth.
-        1.0,                              // Guarantee at payment time.
-        std::exp(0.05 * payment_time)      // Cap at payment time.
-    });
-
-    const auto value = MinMaxPayoff::evaluate(
-        prepared, integrated_variance);
-    const double discount = std::exp(-rate * payment_time);
-
-    std::cout << std::fixed << std::setprecision(6)
-              << "Discounted price per unit of notional: "
-              << discount * value.expected_payoff << '\n'
-              << "Discounted delta per unit of notional: "
-              << discount * value.delta << '\n';
-}
-```
-
-For these inputs, the output is:
-
-```text
-Discounted price per unit of notional: 0.973858
-Discounted delta per unit of notional: 0.299272
-```
-
-Here the variance is supplied directly; the example has no carbon-path simulation or mortality weighting. Integrated variance must be finite and nonnegative. Multiplying its outputs by a policy notional gives a financial cashflow's aggregate price and delta. Example 1 performs the additional carbon and insurance calculations.
-
-Add this target to `CMakeLists.txt`, outside `if(BUILD_TESTING)`:
-
-```cmake
-add_executable(example_min_max_cashflow examples/min_max_cashflow.cpp)
-target_link_libraries(example_min_max_cashflow PRIVATE CarbonFund::carbonfund)
-```
-
-After [reconfiguring your existing build directory](INSTALLATION.md#configure-build-and-test):
+Run project commands from the repository root. For a serial Release build using installed dependencies:
 
 ```bash
-cmake --build build/debug --target example_min_max_cashflow
-./build/debug/example_min_max_cashflow
+cmake -S . -B build-paper-release \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCARBONFUND_ENABLE_OPENMP=OFF \
+    -DBUILD_TESTING=ON &&
+cmake --build build-paper-release --parallel &&
+ctest --test-dir build-paper-release --output-on-failure --no-tests=error
 ```
 
-On Windows, run `.\build\debug\example_min_max_cashflow.exe`.
-
-## How the valuation works
-
-### Prepare once for the current valuation
-
-`Pricer::prepare()` validates setup inputs and constructs:
-
-1. Carbon transition coefficients for the chosen step size.
-2. Allocation coefficients and a factorization of the financial covariance.
-3. Discounted mortality weights, including cohort notionals and death quadrature.
-4. A financial payoff preparation for each future grid date.
-5. The initial allocation-variance contribution and current death-quadrature endpoint.
-
-The current fund value is `contract.fund_value`, corresponding to $X_0$ in the original routine. At each future date $t_i$, the financial kernel stores the forward $F_i=X_0\exp(r t_i)$.
-
-Guarantees grow from their current contractual amounts:
-
-$$
-L(t)=L_0\exp(g_L t),\qquad U(t)=U_0\exp(g_U t).
-$$
-
-Every future payment requires $0\leq L(t_i)<U(t_i)$. Equal guarantees are allowed at the current endpoint only when they become strictly ordered at every future grid date, as in Example 1. At the current death-quadrature endpoint, coincident guarantees give a constant payoff with delta zero. At a single kink the symmetric derivative is one half. The future zero-variance kernel likewise uses half the risk-free growth at a single boundary. This corrects the earlier routine's endpoint delta of one; prices and sample variances are unaffected.
-
-### Simulate carbon and integrate fund variance
-
-For each antithetic pair, `evaluate()` resets both carbon vectors to the supplied current state. At each step it draws four standard normals once, then advances one trajectory with `Z` and the other with `-Z` using the selected carbon stepper. It uses no OU-specific reflection formula, so the same implementation works for OU, GeoOU and CIR NV. Independent mode advances a single trajectory per observation with freshly generated normal draws.
-
-The allocation solves
-
-$$
-\left[\gamma\Sigma+
-\alpha\,\operatorname{diag}\!\left(\Sigma_{ii}\max(Y_i,0)\right)\right]\pi
-=\mu-r\mathbf{1},
-$$
-
-where `risk_aversion` is $\gamma$, `carbon_penalty` is $\alpha$ and `covariance` is $\Sigma$. The covariance must be symmetric positive definite; risk aversion must be positive and the penalty nonnegative.
-
-The instantaneous fund variance is $q_i=\pi_i^\top\Sigma\pi_i$. With step size $h$, integrated variance is accumulated by
-
-$$
-V_i=V_{i-1}+\frac{h}{2}(q_{i-1}+q_i),\qquad V_0=0.
-$$
-
-Each antithetic trajectory maintains its own integrated variance, allocation and benefit accumulators. Both conditional payoffs are evaluated separately before averaging; averaging carbon states or variances first would change the valuation.
-
-The simulated carbon state remains the output of its model. Its positive part is used only in the allocation penalty.
-
-### Evaluate conditional benefits and accumulate statistics
-
-The financial payoff at a payment date is
-
-$$
-H_t=\min\!\left(\max(X_t,L(t)),U(t)\right).
-$$
-
-Conditional on the carbon path, the fund is treated as lognormal with the prepared forward and integrated variance. This assumes the financial noise is independent of the carbon noise. `MinMaxPayoff` integrates that financial noise analytically and calculates both expected payoff and its fund derivative.
-
-Independent Gompertz-Makeham mortality is handled through the prepared survival and death-density weights. Death payments are integrated on the time grid using trapezoidal quadrature. Mortality events are not sampled inside this valuation loop.
-
-The pricer combines maturity and death benefits into one contribution per contract per carbon path. In antithetic mode it averages the two complete price/delta contributions and adds one observation per pair to Welford's statistics. In independent mode each path contributes one observation. Consequently, only carbon randomness contributes to this conditional estimator's Monte Carlo sampling error.
-
-## Current fund value and later valuations
-
-`fund_value` stays fixed within one prepared valuation. It changes when a new valuation is prepared from an observed fund state.
-
-For example, add the following fragment after Example 1's first valuation. Suppose half a year has elapsed, the observed fund value is 1.04, and the surviving notionals are supplied by the outer policyholder bookkeeping:
-
-```cpp
-// This fragment also needs: #include <cmath>
-const double elapsed = 0.5;
-
-auto next_contract = contract;
-next_contract.fund_value = 1.04;
-next_contract.minimum_guarantee *=
-    std::exp(contract.minimum_guarantee_growth_rate * elapsed);
-next_contract.maximum_guarantee *=
-    std::exp(contract.maximum_guarantee_growth_rate * elapsed);
-next_contract.time_to_maturity -= elapsed;
-next_contract.time_intervals = 54;
-
-const Eigen::Vector4d observed_carbon{1.05, 1.15, 0.85, 1.0};
-const contracts::CohortBook surviving_pe{{{60.5, 99000.0}}};
-const contracts::CohortBook surviving_ti{{{60.5, 98500.0}}};
-const contracts::CohortBook surviving_ei{{{60.5, 99200.0}}};
-const contracts::PetieiPortfolioView surviving_portfolio{
-    surviving_pe.cohorts(),
-    surviving_ti.cohorts(),
-    surviving_ei.cohorts()};
-
-const auto next_prepared = Pricer::prepare(
-    next_contract, observed_carbon, carbon, allocation,
-    surviving_portfolio, mortality);
-
-random::SimulationRng next_rng{20261012};
-const auto next_result = Pricer::evaluate(next_prepared, 1000, next_rng);
-
-std::cout << "New EI price: "
-          << next_result.endowment_insurance.price.mean << '\n'
-          << "New EI delta: "
-          << next_result.endowment_insurance.delta.mean << '\n';
-```
-
-The guarantee update follows the contract's growth rates; it is independent of the observed fund value. The cohort ages and surviving notionals refer to the new valuation date. The observed values here are illustrative inputs; this snippet does not generate a hedge path or deaths.
-
-The pricer requires strictly positive remaining maturity. Settlement at maturity belongs to the outer contract/hedging layer.
-
-## Random streams and simulation counts
-
-`SimulationRng` owns a Boost `xoshiro256pp` engine and Boost's Ziggurat normal sampler. AS241 is not included in the production project; it was used through a temporary adapter in separate old/new comparison benchmarks.
-
-Create a stream once and pass it by reference. Each `evaluate()` call advances its state. A freshly constructed stream with the same seed reproduces the same draws for the same implementation and inputs.
-
-`time_intervals` controls the grid size $N$. The second argument of `evaluate()` is the requested trajectory count $M$.
-
-Default antithetic mode uses `M / 2 + M % 2` pairs. An odd request rounds up to the next even actual trajectory count: a request of 1,001 evaluates 1,002 trajectories and produces 501 independent observations. At least three requested trajectories are required, rounded to four actual trajectories, so the estimator has at least two independent pairs.
-
-Independent mode evaluates exactly $M$ trajectories, permits odd counts, and requires at least two. Select the mode explicitly when comparing the methods:
-
-```cpp
-random::SimulationRng plain_rng{20261013};
-random::SimulationRng antithetic_rng{20261013};
-
-const auto plain = Pricer::evaluate(
-    prepared, 1000, plain_rng, pricing::PetieiSampling::independent);
-const auto antithetic = Pricer::evaluate(
-    prepared, 1000, antithetic_rng, pricing::PetieiSampling::antithetic);
-```
-
-Both calls above evaluate exactly 1,000 trajectories. They use 1,000 and 500 independent observations, respectively. With an odd requested count, the antithetic call performs one extra trajectory; use an even count for an equal-trajectory benchmark.
-
-For example, reuse the same prepared valuation with a larger path count:
-
-```cpp
-random::SimulationRng larger_rng{20261011};
-const auto larger_result = Pricer::evaluate(prepared, 4000, larger_rng);
-```
-
-Preparation is read-only during evaluation. Future parallel callers should each own a separate mutable RNG stream; the current inner path loop is serial.
-
-## Compare independent and antithetic sampling
-
-`examples/benchmark_petiei_antithetic.cpp` compares both sampling modes for OU, GeoOU and CIR NV, using the contract and allocation inputs from Example 1. It reports PE/TI/EI price and delta means, their standard errors, median process CPU time, and estimated efficiency.
-
-Build and run it in Release mode, after following the dependency setup in [INSTALLATION.md](INSTALLATION.md):
+### Price contracts and calculate deltas
 
 ```bash
-cmake -S . -B build/antithetic-release \
-    -DBoost_ROOT=/usr -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
-cmake --build build/antithetic-release --target benchmark_petiei_antithetic
-./build/antithetic-release/benchmark_petiei_antithetic 20000 60 5 20261013
+./build-paper-release/example_petiei_monte_carlo
 ```
 
-The optional positional arguments are requested trajectory count, grid intervals, timing repetitions and seed. The defaults are those shown above. At least three trajectories must be requested. For an odd request, the benchmark rounds the common budget up for both methods: a request of 1,001 compares both methods at exactly 1,002 trajectories. It prints both the requested and actual counts. Independent sampling outside this benchmark still uses exactly its requested count.
+The complete setup is in [examples/petiei_monte_carlo.cpp](examples/petiei_monte_carlo.cpp). It constructs PE, TI and EI cohort books, prepares the carbon model and contract inputs, then returns prices and fund deltas.
 
-Preparation and RNG construction are excluded from CPU timing. Both methods are warmed up, and their timing order alternates across repetitions. Repetition `i` uses seed `seed + i`; the reported means and standard errors come from the first seed, while CPU time is the median across repetitions.
-
-The efficiency column estimates `(plain CPU * plain SE^2) / (antithetic CPU * antithetic SE^2)`. Values above one favour antithetics at equal sampling precision. This is an estimate for the selected inputs and machine, not a guaranteed gain. Antithetics can help price and delta by different amounts, and the two estimates need not have identical means. Their shared random inputs also mean their estimation errors are correlated.
-
-## Standard versus conditional Monte Carlo
-
-Use separate carbon and financial streams for standard Monte Carlo:
+Within an application, after constructing those inputs:
 
 ```cpp
-random::SimulationRng carbon_rng{20261015};
-random::SimulationRng financial_rng{20261016};
-const auto standard = Pricer::evaluate(
-    prepared, 1000000, carbon_rng, financial_rng,
-    pricing::PetieiEstimator::standard,
-    pricing::PetieiSampling::antithetic);
+using Pricer = carbonfund::pricing::PetieiMonteCarloPricer4<
+    carbonfund::models::OUExactStepper4>;
+
+const auto prepared = Pricer::prepare(
+    contract, current_carbon, carbon, allocation, portfolio, mortality);
+
+carbonfund::random::SimulationRng rng{20261015};
+const auto result = Pricer::evaluate(prepared, 10000, rng);
+
+const double price = result.endowment_insurance.price.mean;
+const double delta = result.endowment_insurance.delta.mean;
+const double price_se = result.endowment_insurance.price.standard_error;
+const double delta_se = result.endowment_insurance.delta.standard_error;
 ```
 
-Standard antithetics negate both carbon and financial normals. The conditional estimator integrates the financial Gaussian and only reflects carbon normals. Both estimators use the same analytically prepared mortality weights.
+Delta is the derivative with respect to the supplied current fund value, holding the contractual guarantees fixed. It already includes aggregate policy notionals. A new valuation is prepared when the observed fund, carbon state, remaining term or living book changes.
 
-An optional `pricing::PetieiContract` argument selects `pure_endowment`, `term_insurance`, `endowment_insurance` or `all`. Unselected result fields are zero. Standalone PE uses the terminal scheme E3, with one financial normal per path or pair, and one payoff evaluation. TI/EI use the sequential fund scheme E2 by default. The optional `pricing::PetieiFundSampling::independent_marginals` instead samples each grid marginal with a fresh financial normal, matching the old TI/EI implementation; this changes estimator variance while preserving expected prices and deltas.
+### Generate hedging-cost distributions
 
-The paper experiment is available through `benchmark_petiei_variance_reduction`. It compares all four estimator/sampling combinations at each maturity in Table E1. Its mortality inputs use the confirmed Makeham constant `0.0041959` and the exponent `(age + t - m) / b`.
+```bash
+./build-paper-release/example_petiei_hedging 100 128 results/hedging_CIR
+```
 
-See [PAPER_VARIANCE_REDUCTION.md](PAPER_VARIANCE_REDUCTION.md) for the full parameters, measured results, confidence checks, differences from the original code and reproduction commands.
+The arguments are the number of outer scenarios, the inner path count for subsequent valuations, and the output prefix. The example creates the output directory and writes:
+
+- `results/hedging_CIR.csv`: one row per scenario, with the three strategy costs, discounted claims, trading gains, terminal fund and initial premium.
+- `results/hedging_CIR_parameters.json`: model and contract inputs, initial population, grids, path counts and seeds.
+
+The initial premium uses a separate 8,192-path valuation. The example has illustrative CIR parameters and a mixed portfolio; it is not the paper's full hedging experiment. Its complete setup is in [examples/petiei_hedging.cpp](examples/petiei_hedging.cpp).
+
+Outer scenarios follow the physical measure and contain realized carbon and fund paths. The engine accepts these through `MarketPath4`, including externally generated paths. Inner valuation uses the minimal martingale measure and sees only the current observation and living portfolio. Separate market, mortality and pricing streams keep realized scenarios independent of the chosen inner simulation budget.
+
+The small command above checks the workflow. Distribution and tail estimates require substantially more outer scenarios. Increasing the inner path count improves the precision of the hedge positions; it does not increase the number of observed hedging outcomes.
+
+### Analyse and plot the results
+
+Create the Python environment once:
+
+```bash
+python3 -m venv .venv-analysis &&
+./.venv-analysis/bin/python -m pip install numpy matplotlib
+```
+
+Then run:
+
+```bash
+./.venv-analysis/bin/python tools/analyze_hedging.py results/hedging_CIR.csv
+```
+
+The analyser writes statistics and PNG/PDF plots under `hedging_analysis/hedging_CIR/`. Results include means, sample variances, standard deviations, mean standard errors, quantiles, expected shortfall and paired strategy comparisons. Plots show histograms, empirical distribution functions and box plots.
+
+For comparisons between portfolio sizes, use a consistent exposure normalization, available through `--divide-by`. Mortality diversification concerns relative risk: increasing the number of policies also increases aggregate exposure.
+
+### Compare pricing variance and CPU time
+
+```bash
+mkdir -p results &&
+./build-paper-release/benchmark_petiei_variance_reduction \
+    --paths 100000 \
+    --repetitions 3 \
+    --seed 20261015 \
+    --batches 0 \
+    --fund-sampling path \
+    --output-prefix results/paper_path
+```
+
+This compares the four configurations for PE, TI and EI at maturities 5, 10, 20 and 30 years. It prints prices, deltas, sample variances, standard errors, variance reduction percentages and CPU times, and saves the detailed results and parameters. The benchmark source belongs in `benchmarks/`.
+
+At equal actual trajectory count, the reported reduction for price or delta is
+
+$$
+\operatorname{VR}(\%)=100\left(1-
+\frac{\operatorname{SE}_{\text{method}}^2}
+     {\operatorname{SE}_{\text{standard}}^2}\right).
+$$
+
+The standard row reports `0%`. This definition accounts for the smaller number of independent observations in antithetic mode. A raw path variance and a raw pair-average variance have different sample units and should not be compared directly.
+
+`--batches 0` skips statistical agreement checks. To enable batch-based confidence intervals for price and delta differences, repeat the command with, for example, `--batches 100 --batch-paths 2000`. The optional `--fund-sampling marginals` mode reproduces the legacy datewise financial sampling convention; `path` uses a coherent fund trajectory.
+
+The paper-parameter benchmark uses the corrected Makeham constant $\xi=0.0041959$ and the Gompertz exponent $(\text{age}+t-m)/b$. Examples have their own inputs; benchmark results should be interpreted using the parameters saved with each run.
 
 ## Project components
 
+Paths below are relative to `include/carbonfund/`.
+
 | Component | Responsibility |
 |---|---|
-| `models/carbon_models_4d.hpp` | Four-factor OU, GeoOU and CIR NV transitions. |
-| `random/simulation_rng.hpp` | Owned random engine and normal/uniform/Bernoulli draws. |
-| `portfolio/carbon_allocation_4d.hpp` | Carbon-sensitive allocation and instantaneous fund variance. |
-| `contracts/cohorts.hpp` | Aggregate living-policyholder rows and borrowed portfolio views. |
-| `mortality/gompertz_makeham.hpp` | Hazard, survival probabilities and death density. |
-| `pricing/min_max_payoff.hpp` | Realized and conditional financial payoffs with fund delta. |
-| `pricing/petiei_mortality_weights.hpp` | Mortality, discounting, notionals and quadrature weights. |
-| `pricing/petiei_monte_carlo.hpp` | Serial PE/TI/EI pricing, deltas and Monte Carlo statistics. |
+| `models/` | Four-factor carbon dynamics. |
+| `portfolio/` | Carbon-sensitive allocation and instantaneous fund variance. |
+| `contracts/` | Aggregate cohorts and individual policyholder states. |
+| `mortality/` | Gompertz-Makeham hazard and survival probabilities. |
+| `pricing/` | Financial payoff kernels, insurance prices, deltas and Monte Carlo statistics. |
+| `simulation/` | Physical carbon/fund scenarios and externally supplied market paths. |
+| `hedging/` | Revaluation, strategy positions and discounted cash accounting. |
+| `io/` | Scenario-level hedging CSV export. |
+| `random/` | Boost xoshiro256++ streams and Ziggurat normal sampling. |
+| `utils/` | Tabular console output. |
 
-Header paths in the table are relative to `include/carbonfund/`.
-
-To link your own executable, add it to the root CMake file:
+Link an application through the CMake interface target:
 
 ```cmake
 add_executable(my_pricer path/to/my_pricer.cpp)
 target_link_libraries(my_pricer PRIVATE CarbonFund::carbonfund)
 ```
 
-`CarbonFund::carbonfund` is an alias of the interface target `carbonfund`. It supplies the project headers, C++20 requirement, Eigen, Boost headers and optional OpenMP dependency.
+`CarbonFund::carbonfund` supplies the include paths, C++20 requirement and dependencies.
 
-## Numerical validation
+## Numerical scope
 
-CTest currently contains nine tests: carbon models, RNG, allocation, Gompertz-Makeham mortality, cohorts, PETIEI mortality weights, min/max payoff, the PETIEI pricer and the standard/conditioned estimators.
+The implemented pricing and hedging loops are serial. The model uses constant financial parameters, independent carbon factors and financial/carbon noise, independent deterministic-intensity mortality, and frictionless trading with a common borrowing and lending rate. Dynamic hedging is performed on a finite grid; deaths are settled at interval endpoints. Inner Monte Carlo error and time discretization both affect the realized numerical hedge.
 
-The pricing checks include fixed-draw comparisons against independent equations, delta finite differences with common random draws, sample variance and standard error, deterministic and zero-variance cases, model selection, RNG advancement and input validation. Antithetic checks independently reconstruct paired trajectories for all three carbon models and verify pair statistics, odd-count rounding and halved RNG consumption.
+Automated tests cover the carbon models, allocation, RNG, mortality, contracts, payoff kernels, estimators, population bookkeeping and hedging accounts. Pricing checks include delta finite differences and antithetic statistics; hedging checks include discounted cash identities and notional scaling. Statistical agreement and computational performance are evaluated separately by the benchmarks.
 
-The earlier independent-sampling version passed all eight Debug tests and the portfolio example on the reported Ubuntu 26.04.1 / GCC 15.2 / system Boost 1.90.0 setup. The preceding antithetic version passed all eight Debug tests using GCC 13.3.0, CMake 3.28.3, Eigen 3.4.0 and Boost 1.90.0. Its Release pricing tests and equal-trajectory benchmark were also run. The standard/conditioned extension passes all nine Debug and Release tests; the additional checks cover scalar OU/GeoOU/CIR references, E2/E3 and independent marginal sampling, Gaussian quadrature of the conditional kernel, pair means/variances, stream consumption, contract selection, fixed-guarantee deltas and the corrected initial endpoint.
+## Research reference
 
-Generated build files belong in `build/`; dependencies remain outside the repository.
+Katia Colaneri, Alessandra Cretarola, Edoardo Lombardo and Daniele Mancinelli (2026), *Carbon-Sensitive Fund Construction and Hedging for Green Unit-Linked Life Insurance*, and the accompanying supplementary material.
+
+The main paper develops carbon-sensitive fund construction and the insurance hedging framework, with numerical hedging experiments in Section 6. Section E of the supplementary material describes fund simulation, conditioning formulas and the variance-reduction study. The library supports experiments based on this framework; parameter choices, numerical conventions and simulation budgets must be specified for each comparison.
