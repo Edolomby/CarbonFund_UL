@@ -6,20 +6,28 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <ctime>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <mutex>
 #include <set>
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <unordered_set>
 #include <vector>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace {
 namespace cf = carbonfund;
@@ -126,6 +134,56 @@ std::uint64_t mix(std::uint64_t x)
 std::uint64_t repeat_seed(std::uint64_t seed, std::size_t repetition)
 { return repetition == 0 ? seed : mix(seed ^ static_cast<std::uint64_t>(repetition)); }
 
+struct ScenarioSeeds {
+    std::uint64_t carbon, financial, mortality, valuation_carbon, valuation_financial;
+};
+
+// Assign streams in scenario order before workers start. This makes CSV rows
+// independent of worker scheduling, thread count and the total scenario count.
+std::vector<ScenarioSeeds> scenario_seeds(
+    std::size_t scenarios, const std::array<std::uint64_t, 5>& bases,
+    std::uint64_t initial_carbon, std::uint64_t initial_financial)
+{
+    if (scenarios > (std::numeric_limits<std::size_t>::max() - 2) / 5)
+        fail("Scenario count is too large for the random-stream schedule.");
+    constexpr std::array<std::uint64_t, 5> tags{
+        UINT64_C(0x434152424f4e0001), UINT64_C(0x46494e414e430002),
+        UINT64_C(0x4d4f5254414c0003), UINT64_C(0x56414c4341520004),
+        UINT64_C(0x56414c46494e0005)};
+    std::unordered_set<std::uint64_t> used{initial_carbon, initial_financial};
+    used.reserve(5 * scenarios + 2);
+    std::vector<ScenarioSeeds> result;
+    result.reserve(scenarios);
+    for (std::size_t j = 0; j < scenarios; ++j) {
+        std::array<std::uint64_t, 5> seeds;
+        for (std::size_t role = 0; role < seeds.size(); ++role) {
+            auto seed = mix(bases[role] ^ mix(static_cast<std::uint64_t>(j) ^ tags[role]));
+            while (!used.insert(seed).second) ++seed;
+            seeds[role] = seed;
+        }
+        result.push_back({seeds[0], seeds[1], seeds[2], seeds[3], seeds[4]});
+    }
+    return result;
+}
+
+int hedging_threads(const Object& settings, std::size_t scenarios, int& requested)
+{
+    const auto* value = settings.if_contains("threads");
+    const auto input = value ? integer(*value) : UINT64_C(1);
+    if (input > static_cast<std::uint64_t>(std::numeric_limits<int>::max()))
+        fail("hedging.threads must be between 0 and INT_MAX.");
+    requested = static_cast<int>(input);
+#ifdef _OPENMP
+    const int limit = requested == 0 ? std::max(1, omp_get_max_threads()) : requested;
+#else
+    if (requested > 1)
+        fail("Multiple hedging threads require OpenMP. Rebuild with "
+             "-DCARBONFUND_ENABLE_OPENMP=ON or select threads=1.");
+    const int limit = 1;
+#endif
+    return static_cast<int>(std::min(scenarios, static_cast<std::size_t>(limit)));
+}
+
 struct Mode {
     cf::pricing::PetieiEstimator estimator;
     cf::pricing::PetieiSampling sampling;
@@ -146,16 +204,25 @@ struct Valuation {
     std::size_t paths, intervals;
     std::string configuration;
     std::uint64_t carbon_seed, financial_seed;
+    std::size_t minimum_intervals = 1;
 };
 
-Valuation valuation(const Value& value)
+Valuation valuation(const Value& value, bool revaluation = false)
 {
     const auto& o = object(value, "valuation");
-    keys(o, {"paths", "intervals", "configuration",
-             "carbon_seed", "financial_seed"}, "valuation");
+    if (revaluation)
+        keys(o, {"paths", "intervals", "minimum_intervals", "configuration",
+                 "carbon_seed", "financial_seed"}, "revaluation");
+    else
+        keys(o, {"paths", "intervals", "configuration",
+                 "carbon_seed", "financial_seed"}, "valuation");
     Valuation s{count(o, "paths", 2), count(o, "intervals", 1),
         string(field(o, "configuration")),
         integer(field(o, "carbon_seed")), integer(field(o, "financial_seed"))};
+    if (revaluation && o.if_contains("minimum_intervals"))
+        s.minimum_intervals = count(o, "minimum_intervals", 1);
+    if (s.minimum_intervals > s.intervals)
+        fail("revaluation.minimum_intervals must not exceed revaluation.intervals.");
     if (mode(s.configuration).sampling == cf::pricing::PetieiSampling::antithetic &&
         s.paths < 3) fail("Antithetic sampling requires at least two complete pairs.");
     if (s.carbon_seed == s.financial_seed) fail("Carbon and financial seeds must differ.");
@@ -382,22 +449,22 @@ Object hedging(const Inputs& in, const typename Stepper::Parameters& carbon,
                const std::filesystem::path& output)
 {
     const auto& s = object(field(in.config.as_object(), "hedging"), "hedging");
-    keys(s, {"outer_scenarios", "intervals", "progress_every", "carbon_seed",
+    keys(s, {"outer_scenarios", "intervals", "progress_every", "threads", "carbon_seed",
              "financial_seed", "mortality_seed", "initial", "revaluation"}, "hedging");
     const auto scenarios = count(s, "outer_scenarios", 2);
     const auto intervals = count(s, "intervals", 1);
     const auto progress = count(s, "progress_every", 0);
+    int requested_threads = 1;
+    const int team_limit = hedging_threads(s, scenarios, requested_threads);
     const auto initial = valuation(field(s, "initial"));
-    const auto later = valuation(field(s, "revaluation"));
+    const auto later = valuation(field(s, "revaluation"), true);
     const auto cs = integer(field(s, "carbon_seed"));
     const auto fs = integer(field(s, "financial_seed"));
     const auto ms = integer(field(s, "mortality_seed"));
     const std::set<std::uint64_t> seeds{cs, fs, ms, initial.carbon_seed,
         initial.financial_seed, later.carbon_seed, later.financial_seed};
     if (seeds.size() != 7) fail("Use distinct seeds for all seven hedging streams.");
-    cf::random::SimulationRng cr{cs}, fr{fs}, mr{ms};
     cf::random::SimulationRng ic{initial.carbon_seed}, iff{initial.financial_seed};
-    cf::random::SimulationRng rc{later.carbon_seed}, rf{later.financial_seed};
     cf::contracts::PolicyholderPopulation population{in.people};
     using Pricer = cf::pricing::PetieiMonteCarloPricer4<Stepper>;
     const auto value_at = [&](double time, double fund, const Eigen::Vector4d& state,
@@ -409,10 +476,9 @@ Object hedging(const Inputs& in, const typename Stepper::Parameters& carbon,
         p.minimum_guarantee = p.minimum_guarantee == 0.0 ? 0.0 :
             p.minimum_guarantee * std::exp(p.minimum_guarantee_growth_rate * time);
         p.maximum_guarantee *= std::exp(p.maximum_guarantee_growth_rate * time);
-        const long double grid = std::ceil(static_cast<long double>(v.intervals) *
-            (static_cast<long double>(p.time_to_maturity) / in.contract.time_to_maturity));
-        p.time_intervals = grid >= v.intervals ? v.intervals
-            : std::max<std::size_t>(1, static_cast<std::size_t>(grid));
+        p.time_intervals = cf::hedging::petiei_revaluation_intervals(
+            v.intervals, p.time_to_maturity, in.contract.time_to_maturity,
+            v.minimum_intervals);
         const auto prepared = Pricer::prepare(p, state, carbon, in.allocation, living, in.mortality);
         const auto m = mode(v.configuration);
         return Pricer::evaluate(prepared, v.paths, carbon_rng, financial_rng,
@@ -423,44 +489,107 @@ Object hedging(const Inputs& in, const typename Stepper::Parameters& carbon,
             r.pure_endowment.price.mean + r.term_insurance.price.mean + r.endowment_insurance.price.mean,
             {r.pure_endowment.delta.mean, r.term_insurance.delta.mean, r.endowment_insurance.delta.mean}};
     };
+    const auto initial_wall_start = std::chrono::steady_clock::now();
     const auto start = std::clock();
     const auto first = value_at(0.0, in.contract.fund_value, in.initial_carbon,
         population.living_portfolio(), initial, ic, iff);
     const auto initial_cpu = cpu_since(start);
+    const double initial_wall = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - initial_wall_start).count();
     const auto initial_value = to_hedge(first);
     // Validate revaluation settings even when there will be no intermediate date.
     auto check_terms = in.contract;
     check_terms.time_intervals = later.intervals;
     static_cast<void>(Pricer::prepare(check_terms, in.initial_carbon, carbon,
         in.allocation, population.living_portfolio(), in.mortality));
-    const auto revalue = [&](double time, double fund, const Eigen::Vector4d& state,
-                             cf::contracts::PetieiPortfolioView living) {
-        return to_hedge(value_at(time, fund, state, living, later, rc, rf));
-    };
     using Generator = cf::simulation::MarketScenarioGenerator4<Stepper>;
     const auto prepared = Generator::prepare(in.contract.fund_value, in.initial_carbon,
         carbon, in.allocation, in.contract.time_to_maturity, intervals);
-    cf::simulation::MarketPath4 path;
-    std::vector<cf::hedging::PetieiHedgeOutcome> outcomes;
-    outcomes.reserve(scenarios);
+    const auto simulation_wall_start = std::chrono::steady_clock::now();
     const auto simulation_start = std::clock();
-    for (std::size_t j = 0; j < scenarios; ++j) {
-        Generator::generate(prepared, cr, fr, path);
-        outcomes.push_back(cf::hedging::run_petiei_hedge(j, path, in.contract,
-            in.allocation.risk_free_rate, population, in.mortality, initial_value, mr, revalue));
-        if (progress && ((j + 1) % progress == 0 || j + 1 == scenarios))
-            std::cout << "Hedging scenarios completed: " << j + 1 << '/' << scenarios << std::endl;
+    const auto streams = scenario_seeds(scenarios,
+        {cs, fs, ms, later.carbon_seed, later.financial_seed},
+        initial.carbon_seed, initial.financial_seed);
+    struct Worker {
+        cf::contracts::PolicyholderPopulation population;
+        cf::simulation::MarketPath4 path;
+        explicit Worker(const cf::contracts::PolicyholderPopulation& initial)
+            : population(initial) {}
+    };
+    // Construct worker storage before entering OpenMP, where allocation errors
+    // cannot safely escape a parallel region. Each worker reuses its own buffers.
+    std::vector<Worker> workers;
+    workers.reserve(static_cast<std::size_t>(team_limit));
+    for (int i = 0; i < team_limit; ++i) workers.emplace_back(population);
+    std::vector<cf::hedging::PetieiHedgeOutcome> outcomes(scenarios);
+    std::mutex progress_mutex, failure_mutex;
+    std::size_t completed = 0;
+    std::atomic<bool> failed{false};
+    std::exception_ptr failure;
+    const auto run_scenario = [&](std::size_t j, Worker& worker) {
+        if (failed.load(std::memory_order_relaxed)) return;
+        try {
+            const auto& seed = streams[j];
+            cf::random::SimulationRng cr{seed.carbon}, fr{seed.financial}, mr{seed.mortality};
+            cf::random::SimulationRng rc{seed.valuation_carbon}, rf{seed.valuation_financial};
+            const auto revalue = [&](double time, double fund, const Eigen::Vector4d& state,
+                                     cf::contracts::PetieiPortfolioView living) {
+                return to_hedge(value_at(time, fund, state, living, later, rc, rf));
+            };
+            Generator::generate(prepared, cr, fr, worker.path);
+            outcomes[j] = cf::hedging::run_petiei_hedge(j, worker.path, in.contract,
+                in.allocation.risk_free_rate, worker.population, in.mortality,
+                initial_value, mr, revalue);
+            if (progress) {
+                std::lock_guard<std::mutex> lock(progress_mutex);
+                ++completed;
+                if (completed % progress == 0 || completed == scenarios)
+                    std::cout << "Hedging scenarios completed: " << completed
+                              << '/' << scenarios << std::endl;
+            }
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(failure_mutex);
+            if (!failure) failure = std::current_exception();
+            failed.store(true, std::memory_order_relaxed);
+        }
+    };
+    int actual_threads = 1;
+#ifdef _OPENMP
+#pragma omp parallel num_threads(team_limit) if(team_limit > 1)
+    {
+#pragma omp single
+        actual_threads = omp_get_num_threads();
+        auto& worker = workers[static_cast<std::size_t>(omp_get_thread_num())];
+#pragma omp for schedule(dynamic, 1)
+        for (std::size_t j = 0; j < scenarios; ++j) run_scenario(j, worker);
     }
+#else
+    for (std::size_t j = 0; j < scenarios; ++j) run_scenario(j, workers.front());
+#endif
+    if (failure) std::rethrow_exception(failure);
     const auto simulation_cpu = cpu_since(simulation_start);
+    const double simulation_wall = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - simulation_wall_start).count();
     cf::io::write_hedging_csv(output / "hedging.csv", outcomes);
     js::array deltas;
     for (double d : initial_value.deltas) deltas.push_back(d);
     return {{"initial_price", initial_value.price}, {"initial_deltas_PE_TI_EI", deltas},
+        {"revaluation_minimum_intervals", later.minimum_intervals},
+        {"revaluation_grid_rule", "max(minimum_intervals, ceil(intervals * (T-t) / T))"},
         {"initial_actual_paths", first.simulations},
         {"revaluation_actual_paths", later.paths +
             (mode(later.configuration).sampling == cf::pricing::PetieiSampling::antithetic
                 ? later.paths % 2 : 0)},
         {"initial_cpu_seconds", initial_cpu}, {"simulation_cpu_seconds", simulation_cpu},
+        {"initial_wall_seconds", initial_wall}, {"simulation_wall_seconds", simulation_wall},
+        {"threads_requested", requested_threads}, {"threads_used", actual_threads},
+#ifdef _OPENMP
+        {"openmp_enabled", true},
+#else
+        {"openmp_enabled", false},
+#endif
+        {"scenario_seed_schedule", "splitmix64-scenario-role-v1; scenario-major; "
+            "five streams; increment on collision; exclude initial seeds"},
         {"cost_valuation_time", 0}, {"positive_cost", "additional funding required"},
         {"outer_measure", "physical"}, {"inner_measure", "minimal martingale"},
         {"death_settlement", "interval right endpoint"},

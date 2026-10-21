@@ -75,6 +75,7 @@ def demo_config(experiment: str = "pricing", contract: str = "PE") -> dict:
     }
     initial = {**valuation, "paths": 8192, "carbon_seed": 2026101605,
                "financial_seed": 2026101607}
+    valuation["minimum_intervals"] = 1
     return {
         "schema_version": 1, "experiment": experiment,
         "market": {
@@ -103,6 +104,7 @@ def demo_config(experiment: str = "pricing", contract: str = "PE") -> dict:
         },
         "hedging": {
             "outer_scenarios": 100, "intervals": 20, "progress_every": 10,
+            "threads": 0,
             "carbon_seed": 2026101601, "financial_seed": 2026101602,
             "mortality_seed": 2026101603, "initial": initial, "revaluation": valuation,
         },
@@ -260,14 +262,17 @@ def validate_config(config: dict) -> None:
         if _numeric(p["age"], "age") < 0 or _numeric(p["notional"], "notional") < 0:
             raise ValueError("Ages and notionals must be nonnegative")
     max_count = min(sys.maxsize * 2, 2**64 - 2)
-    def valuation(v: dict, name: str) -> list[int]:
-        exact(v, {"paths", "intervals", "configuration",
-                  "carbon_seed", "financial_seed"}, name)
+    def valuation(v: dict, name: str, *, revaluation: bool = False) -> list[int]:
+        fields = {"paths", "intervals", "configuration", "carbon_seed", "financial_seed"}
+        _keys(v, fields | ({"minimum_intervals"} if revaluation else set()), fields, name)
         if v["configuration"] not in MODES:
             raise ValueError(f"Unknown {name} configuration")
         minimum = 3 if "antithetic" in v["configuration"] else 2
         _integer(v["paths"], name + ".paths", minimum, max_count)
         _integer(v["intervals"], name + ".intervals", 1, max_count)
+        if revaluation:
+            _integer(v.get("minimum_intervals", 1), name + ".minimum_intervals",
+                     1, v["intervals"])
         return [_integer(v[k], k) for k in ("carbon_seed", "financial_seed")]
     if c["experiment"] == "pricing":
         p = exact(c.get("pricing"), {"contract", "paths", "intervals", "configurations",
@@ -288,14 +293,16 @@ def validate_config(config: dict) -> None:
                 raise ValueError("Carbon and financial seeds must differ")
         _integer(p["repetitions"], "repetitions", 1, max_count)
     else:
-        h = exact(c.get("hedging"), {"outer_scenarios", "intervals", "progress_every",
-            "carbon_seed", "financial_seed", "mortality_seed", "initial", "revaluation"}, "hedging")
+        fields = {"outer_scenarios", "intervals", "progress_every", "threads",
+                  "carbon_seed", "financial_seed", "mortality_seed", "initial", "revaluation"}
+        h = _keys(c.get("hedging"), fields, fields - {"threads"}, "hedging")
         _integer(h["outer_scenarios"], "outer_scenarios", 2, max_count)
         _integer(h["intervals"], "hedging.intervals", 1, max_count)
         _integer(h["progress_every"], "progress_every", 0, max_count)
+        _integer(h.get("threads", 1), "hedging.threads", 0, 2**31 - 1)
         seeds = [_integer(h[k], k) for k in ("carbon_seed", "financial_seed", "mortality_seed")]
         seeds += valuation(h["initial"], "initial")
-        seeds += valuation(h["revaluation"], "revaluation")
+        seeds += valuation(h["revaluation"], "revaluation", revaluation=True)
         if len(set(seeds)) != 7:
             raise ValueError("Use distinct seeds for all seven hedging streams")
     a = exact(c["analysis"], {"normalization", "confidence_level", "comparison_family_size", "quantiles",

@@ -185,6 +185,20 @@ void check_maturity_and_revaluation()
     const auto expected = Pricer::evaluate(prepared, 32, rng_b);
     close(actual.price, expected.pure_endowment.price.mean, "Revaluation changed the contractual guarantee anchor.");
     close(actual.deltas[0], expected.pure_endowment.delta.mean, "Revaluation delta disagrees with direct pricing.");
+    // Compare the public adapter against direct pricing on a refined grid,
+    // with identical normal draws and guarantee anchors.
+    random::SimulationRng floor_rng{92}, direct_rng{92};
+    const auto refined = hedging::price_petiei_at<Stepper>(original, .5, 2.3,
+        Eigen::Vector4d::Constant(1.1), carbon, allocation, population.living_portfolio(),
+        gm, 32, floor_rng, pricing::PetieiSampling::antithetic, 8);
+    manual.time_intervals = 8;
+    const auto refined_prepared = Pricer::prepare(manual, Eigen::Vector4d::Constant(1.1),
+        carbon, allocation, population.living_portfolio(), gm);
+    const auto direct = Pricer::evaluate(refined_prepared, 32, direct_rng);
+    close(refined.price, direct.pure_endowment.price.mean,
+          "The revaluation adapter ignored the minimum interval count.");
+    close(refined.deltas[0], direct.pure_endowment.delta.mean,
+          "The refined revaluation delta disagrees with direct pricing.");
     invalid([&] { (void)hedging::price_petiei_at<Stepper>(original, 1, 2.3,
         Eigen::Vector4d::Ones(), carbon, allocation, population.living_portfolio(), gm, 32, rng_a); });
     auto bad = path; bad.fund[0] = 1;
@@ -194,6 +208,32 @@ void check_maturity_and_revaluation()
     invalid([&] { bad.validate(); });
     bad = path; bad.carbon.clear();
     invalid([&] { bad.validate(); });
+}
+
+void check_revaluation_grid_floor()
+{
+    using hedging::petiei_revaluation_intervals;
+    require(petiei_revaluation_intervals(256, 20, 20, 16) == 256,
+            "The initial revaluation grid must retain the full horizon budget.");
+    require(petiei_revaluation_intervals(256, 10, 20, 16) == 128,
+            "The minimum changed a residual grid above the floor.");
+    require(petiei_revaluation_intervals(256, 1, 20) == 13,
+            "The default floor changed the previous shrinking grid.");
+    require(petiei_revaluation_intervals(256, 1, 20, 16) == 16 &&
+            petiei_revaluation_intervals(256, .01, 20, 16) == 16,
+            "The selected minimum did not refine the near-maturity grid.");
+    require(petiei_revaluation_intervals(256, .01, 20) == 1,
+            "The default minimum must remain one interval.");
+    require(petiei_revaluation_intervals(256, .01, 20, 256) == 256,
+            "A floor equal to the base must give a fixed interval count.");
+    invalid([] { (void)petiei_revaluation_intervals(256, 1, 20, 0); });
+    invalid([] { (void)petiei_revaluation_intervals(256, 1, 20, 257); });
+    invalid([] { (void)petiei_revaluation_intervals(0, 1, 20); });
+    invalid([] { (void)petiei_revaluation_intervals(256, 0, 20); });
+    invalid([] { (void)petiei_revaluation_intervals(256, 21, 20); });
+    invalid([] { (void)petiei_revaluation_intervals(256, 1, 0); });
+    invalid([] { (void)petiei_revaluation_intervals(256,
+        std::numeric_limits<double>::quiet_NaN(), 20); });
 }
 
 void check_exhausted_population()
@@ -248,7 +288,8 @@ int main()
         check_cash_accounting(); check_notional_scaling();
         check_market_generator<models::OUExactStepper4>();
         check_market_generator<models::CIRNVStepper4>();
-        check_maturity_and_revaluation(); check_exhausted_population(); check_csv();
+        check_maturity_and_revaluation(); check_revaluation_grid_floor();
+        check_exhausted_population(); check_csv();
         std::cout << "All PETIEI hedging checks passed.\n";
         return 0;
     } catch (const std::exception& error) {

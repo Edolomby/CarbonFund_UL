@@ -130,9 +130,34 @@ inline double realised_payoff(const pricing::PetieiMonteCarloParameters& p,
     return shares;
 }
 
+// Preserve the full-horizon time-step until the selected minimum refines the
+// residual grid. The minimum counts intervals, not grid points.
+[[nodiscard]] inline std::size_t petiei_revaluation_intervals(
+    std::size_t full_horizon_intervals, double remaining_time,
+    double original_maturity, std::size_t minimum_intervals = 1)
+{
+    if (full_horizon_intervals == 0 ||
+        full_horizon_intervals == std::numeric_limits<std::size_t>::max() ||
+        minimum_intervals == 0 || minimum_intervals > full_horizon_intervals)
+        throw std::invalid_argument(
+            "Revaluation requires 1 <= minimum_intervals <= full_horizon_intervals, "
+            "with a representable interval count.");
+    if (!std::isfinite(remaining_time) || !std::isfinite(original_maturity) ||
+        original_maturity <= 0.0 || remaining_time <= 0.0 ||
+        remaining_time > original_maturity)
+        throw std::invalid_argument(
+            "Revaluation requires 0 < remaining_time <= original_maturity.");
+    const long double desired = std::ceil(
+        static_cast<long double>(full_horizon_intervals) *
+        (static_cast<long double>(remaining_time) / original_maturity));
+    const auto scaled = desired >= static_cast<long double>(full_horizon_intervals)
+        ? full_horizon_intervals : static_cast<std::size_t>(desired);
+    return std::max(minimum_intervals, scaled);
+}
+
 // Existing conditioned MC pricer adapted to a valuation at an observed state.
 // Guarantees remain anchored to the original contract, independent of fund.
-// Keep approximately the initial pricing time-step as maturity decreases.
+// Keep approximately the initial pricing time-step, with a configurable floor.
 template<class CarbonStepper, class PricingRng>
 [[nodiscard]] PetieiHedgeValuation price_petiei_at(
     const pricing::PetieiMonteCarloParameters& original,
@@ -142,7 +167,8 @@ template<class CarbonStepper, class PricingRng>
     const contracts::PetieiPortfolioView& living,
     const mortality::GompertzMakeham& mortality,
     std::size_t simulations, PricingRng& rng,
-    pricing::PetieiSampling sampling = pricing::PetieiSampling::antithetic)
+    pricing::PetieiSampling sampling = pricing::PetieiSampling::antithetic,
+    std::size_t minimum_intervals = 1)
 {
     detail::validate_terms(original, allocation.risk_free_rate);
     if (original.time_intervals == 0 ||
@@ -157,11 +183,9 @@ template<class CarbonStepper, class PricingRng>
         original.minimum_guarantee * std::exp(original.minimum_guarantee_growth_rate * time);
     p.maximum_guarantee = original.maximum_guarantee *
         std::exp(original.maximum_guarantee_growth_rate * time);
-    const long double desired = std::ceil(static_cast<long double>(original.time_intervals) *
-        (static_cast<long double>(p.time_to_maturity) / original.time_to_maturity));
-    p.time_intervals = desired >= static_cast<long double>(original.time_intervals)
-        ? original.time_intervals
-        : std::max<std::size_t>(1, static_cast<std::size_t>(desired));
+    p.time_intervals = petiei_revaluation_intervals(
+        original.time_intervals, p.time_to_maturity,
+        original.time_to_maturity, minimum_intervals);
     using Pricer = pricing::PetieiMonteCarloPricer4<CarbonStepper>;
     const auto prepared = Pricer::prepare(p, observed_carbon, carbon_parameters,
                                           allocation, living, mortality);
