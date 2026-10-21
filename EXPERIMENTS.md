@@ -41,7 +41,7 @@ Keep existing benchmark source paths under `benchmarks/`.
 cmake -S . -B build-paper-release \
     -DBoost_ROOT=/usr \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCARBONFUND_ENABLE_OPENMP=OFF \
+    -DCARBONFUND_ENABLE_OPENMP=ON \
     -DBUILD_TESTING=ON &&
 cmake --build build-paper-release --parallel &&
 ctest --test-dir build-paper-release --output-on-failure --no-tests=error
@@ -210,7 +210,7 @@ config["population"] = [
     for kind in ("PE", "TI", "EI")
     for i in range(20)
 ]
-config["hedging"].update(outer_scenarios=1000, intervals=40)
+config["hedging"].update(outer_scenarios=1000, intervals=40, threads=8)
 config["hedging"]["initial"].update(paths=8192, intervals=100)
 config["hedging"]["revaluation"].update(paths=512, intervals=100)
 config["analysis"]["normalization"] = "per_notional"
@@ -235,6 +235,84 @@ martingale measure. Initial and subsequent valuations may select different
 estimators. All seven seed inputs are explicit and must be distinct, including
 financial streams unused in conditioned mode. Changing inner path budgets
 does not change realized markets or deaths.
+
+### Parallel outer scenarios
+
+The C++ runner parallelizes complete outer hedging scenarios with OpenMP.
+Time evolution and inner Monte Carlo sampling within each scenario remain
+sequential. Each worker owns its population and market-path buffers. Random
+streams belong to scenarios rather than workers, and every result is written
+to its scenario-indexed CSV row.
+
+Set `hedging.threads` explicitly in the notebook or JSON:
+
+| Value | Behaviour |
+| --- | --- |
+| `1` | Execute the outer scenarios on one thread. |
+| `2`, `4`, `8`, ... | Request this many outer workers. |
+| `0` | Use the OpenMP runtime's default maximum team size. |
+
+The requested team is capped by the number of outer scenarios. OpenMP runtime
+limits can reduce the actual team further. The demo configurations explicitly
+select `threads=0`. Older configurations without this field default to one
+thread. Build with `-DCARBONFUND_ENABLE_OPENMP=ON` to use multiple workers.
+A build without OpenMP accepts `0` or `1` and uses one worker; an explicit
+request greater than one fails with a rebuild instruction.
+
+Initial valuation is performed once before the parallel region and shared by
+all workers. Workers do not share mutable RNGs, policyholder states, path
+storage or pricing workspaces. Progress messages count completed scenarios;
+completion order can differ from scenario order. CSV rows remain ordered by
+scenario ID. Worker exceptions are caught and rethrown after the parallel
+region; a failed run does not export a partial hedging CSV.
+
+#### Random streams and repeatability
+
+The initial valuation retains its supplied carbon and financial seeds.
+Each outer scenario receives five derived seeds: outer carbon, outer financial,
+mortality, revaluation carbon and revaluation financial. They are generated
+serially in scenario/role order using the SplitMix64 mixing function. Any seed
+collision is resolved by incrementing, excluding the initial valuation seeds.
+The versioned schedule is recorded in `metadata.json`.
+
+For the same inputs and executable, changing only `threads` preserves every
+numerical CSV value, including dynamic costs. Extending the scenario count
+preserves the existing prefix. Changing inner path budgets does not change
+outer markets or mortality draws.
+
+This scenario-based schedule replaces the previous continuous cross-scenario
+streams, including in one-thread runs. New hedging samples therefore differ
+from older saved CSVs. Initial pricing, payoff formulas and hedge accounting
+are unchanged. The PE-only optimization is not part of this change.
+
+#### Timing and diagnostics
+
+`metadata.json` contains these fields inside `run`:
+
+| Field | Meaning |
+| --- | --- |
+| `threads_requested` | The supplied value, or `1` when omitted. |
+| `threads_used` | Actual outer team size. |
+| `openmp_enabled` | Whether the runner was compiled with OpenMP. |
+| `initial_wall_seconds` | Elapsed time for the initial valuation. |
+| `simulation_wall_seconds` | Elapsed time for outer setup and scenario execution, before CSV export. |
+| `initial_cpu_seconds` | Process CPU time for initial valuation. |
+| `simulation_cpu_seconds` | Process CPU time for outer setup and scenario execution. |
+| `scenario_seed_schedule` | Versioned random-stream schedule. |
+
+Compare `simulation_wall_seconds` when measuring parallel speedup. CPU time
+sums work across process threads and need not fall when elapsed time falls.
+The top-level `wall_seconds` measures the C++ experiment, including export;
+it excludes Python analysis and plotting.
+
+For example, after a notebook run:
+
+```python
+run = result.metadata["run"]
+print("Threads:", run["threads_used"])
+print("Elapsed seconds:", run["simulation_wall_seconds"])
+print("CPU seconds:", run["simulation_cpu_seconds"])
+```
 
 Initial and subsequent pricing interval counts refer to the original maturity.
 Later grids shrink with remaining maturity to retain approximately that step
@@ -303,8 +381,20 @@ Checks cover three carbon models, odd-budget pairing, repeatability, variance/SE
 identities, normalization, paired repetitions, unique repetition seeds,
 discounted hedge accounting, notional scaling, budget-independent scenarios,
 standard-estimator hedging, invalid inputs, plots and deterministic cases.
+They also check identical serial/parallel CSVs for all three carbon models and
+all four estimators, thread controls, scenario-prefix stability, progress
+counts, worker error handling and timing metadata.
+
+To compare both build variants, additionally pass an executable compiled with
+OpenMP disabled:
+
+```bash
+python tests/test_experiment_interface.py \
+    --binary build-paper-release/carbonfund_experiment \
+    --serial-binary build-no-openmp/carbonfund_experiment
+```
 
 When existing `example_petiei_hedging` and
 `benchmark_petiei_variance_reduction` binaries are beside the runner, the checks
-also compare the hedging CSV with the original example and pricing moments
+also compare initial hedging premiums with the original example and pricing moments
 with all 96 rows of the existing paper benchmark.

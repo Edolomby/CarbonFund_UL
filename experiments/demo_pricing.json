@@ -112,6 +112,7 @@
     "outer_scenarios": 100,
     "intervals": 20,
     "progress_every": 10,
+    "threads": 0,
     "carbon_seed": 2026101601,
     "financial_seed": 2026101602,
     "mortality_seed": 2026101603,
