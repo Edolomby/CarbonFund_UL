@@ -1,6 +1,6 @@
-# CarbonFund_UL
+# CarbonFund-UL
 
-**Pricing and risk-minimizing hedging of life insurance portfolios linked to investment funds with carbon preferences.**
+**Pricing and risk-minimizing hedging of carbon-sensitive unit-linked insurance portfolios.**
 
 CarbonFund_UL is a C++20 research library implementing the numerical framework developed in:
 
