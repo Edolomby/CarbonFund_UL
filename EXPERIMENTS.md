@@ -132,7 +132,7 @@ Both valuation sections specify `paths`, `intervals`, `configuration`, `carbon_s
 For original maturity `T` and valuation time `t`, the residual pricing grid uses
 
 $$
-N(t)=\max\!\left(N_{\min},\left\lceil N_{\mathrm{base}}\frac{T-t}{T}\right\rceil\right).
+N(t)=\max\left(N_{\min},\left\lceil N_{\mathrm{base}}\frac{T-t}{T}\right\rceil\right).
 $$
 
 Setting `minimum_intervals` equal to `intervals` fixes the residual interval count. This setting is separate from the outer hedge grid. The initial valuation uses its own specified interval count at time zero.
