@@ -50,7 +50,7 @@ The benchmark uses the rounded correlation matrix printed in Table 4.1:
 0.32  0.33  0.31  1.00
 ```
 
-The legacy code also contains more precise correlations: 0.4397, 0.3900, 0.3168, 0.2954, 0.3261 and 0.3134. Several hedging notebooks explicitly use these values. Record the actual matrix when comparing results; the rounded and full-precision calibrations are distinct inputs.
+Several hedging notebooks use the correlations 0.4397, 0.3900, 0.3168, 0.2954, 0.3261 and 0.3134. These differ from the rounded benchmark inputs. Record the actual correlation matrix when comparing results.
 
 The Gompertz-Makeham exponent is `(age + t - m) / b`. The corrected Makeham value is `0.0041959`; older outputs using `0.00279` target a different mortality model. Original historical standard TI/EI variance entries also used a different dependence between financial draws at successive dates. They are not exact acceptance targets for the coherent sequential estimator.
 
