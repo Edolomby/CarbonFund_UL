@@ -128,19 +128,6 @@ The notebooks expose model, contract, population, simulation and analysis settin
 
 The main paper develops the fund construction and hedging framework, with numerical hedging experiments in Section 6. Section E of the supplementary material describes fund simulation and the conditional pricing method. Reproduction requires matching both the model inputs and the numerical settings; the quick-start demos use their own illustrative parameters.
 
-## Numerical conventions
-
-**Pricing uncertainty and residual risk are different quantities.** Pricing variance measures uncertainty in a Monte Carlo estimate. Hedging-cost variance measures the distribution of realized residual costs across outer scenarios. Increasing the inner pricing budget improves hedge estimates; increasing the outer scenario count improves estimates of the cost distribution.
-
-**Antithetic statistics use pair averages.** Each trajectory is advanced with its own model transition using Gaussian inputs of opposite sign. This applies to OU, geometric OU and CIR. A pair average is one independent statistical observation, so its standard error uses the number of pairs. Odd trajectory requests round up to the next even count. The reported variance reduction percentages compare variances of the estimated means, accounting for these different observation counts. Antithetic sampling need not improve every quantity.
-
-**All hedging costs are expressed at time zero.** A positive cost means additional funding is required; a negative cost means a surplus. Costs equal discounted benefit payments minus the initial premium and discounted trading gains. The three strategies share the initial premium and realized scenario. The static benchmark scales its initial aggregate deltas by surviving-notional ratios within each contract type; the dynamic strategy recalculates delta from the current state and living portfolio.
-
-**Outer scenarios and valuation serve different purposes.** Realized fund and carbon scenarios follow the physical measure. Inner pricing uses the minimal martingale measure: the fund's financial drift is the risk-free rate, while asset expected returns still determine its allocation. Carbon and financial noise are independent, and individual lifetimes are independent under deterministic mortality intensity.
-
-**Time discretization remains part of the experiment.** Dynamic hedging rebalances on a finite grid and settles deaths at interval endpoints. Pricing, outer-path and revaluation grids can therefore affect results beyond the reported Monte Carlo standard errors. The revaluation grid scales with remaining maturity, subject to `hedging.revaluation.minimum_intervals`. Hedging-cost confidence intervals condition on the initial premium used in the run and do not include its separate estimation uncertainty.
-
-The current implementation fixes the number of risky assets and carbon factors at four, uses constant financial parameters and assumes frictionless trading with a common borrowing and lending rate. The CIR scheme requires `mean_reversion[i] * long_run_mean[i] >= volatility[i]^2 / 4` for each factor. Paper-calibrated experiments use the Makeham parameter `xi = 0.0041959`.
 
 ## C++ use
 
@@ -153,11 +140,13 @@ See [examples/petiei_monte_carlo.cpp](examples/petiei_monte_carlo.cpp) for direc
 When using the framework or numerical methods in research, cite:
 
 ```bibtex
-@misc{colaneri2026carbonsensitive,
-  author = {Colaneri, Katia and Cretarola, Alessandra and
-            Lombardo, Edoardo and Mancinelli, Daniele},
-  title = {Carbon-Sensitive Fund Construction and Hedging for
-           Green Unit-Linked Life Insurance},
-  year = {2026}
+@misc{colaneri2026carbonsensitivefundconstructionhedging,
+      title={Carbon-Sensitive Fund Construction and Hedging for Green Unit-Linked Life Insurance},
+      author={Katia Colaneri and Alessandra Cretarola and Edoardo Lombardo and Daniele Mancinelli},
+      year={2026},
+      eprint={2509.05676},
+      archivePrefix={arXiv},
+      primaryClass={q-fin.RM},
+      url={https://arxiv.org/abs/2509.05676},
 }
 ```
