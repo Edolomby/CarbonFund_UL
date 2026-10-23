@@ -4,7 +4,7 @@
 
 CarbonFund_UL is a C++20 research library implementing the numerical framework developed in:
 
-> Katia Colaneri, Alessandra Cretarola, Edoardo Lombardo and Daniele Mancinelli (2026), *Carbon-Sensitive Fund Construction and Hedging for Green Unit-Linked Life Insurance*, and its supplementary material.
+> Katia Colaneri, Alessandra Cretarola, Edoardo Lombardo and Daniele Mancinelli (2026), [*Carbon-Sensitive Fund Construction and Hedging for Green Unit-Linked Life Insurance*](https://arxiv.org/abs/2509.05676).
 
 The fund adjusts its investment allocation in response to firms' carbon intensities. These investment choices affect both the insurance benefits and the insurer's hedge. The library connects fund construction, insurance valuation and portfolio simulation to study how effectively financial trading controls risk when carbon intensity and mortality introduce additional, non-traded sources of uncertainty.
 
