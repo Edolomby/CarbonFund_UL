@@ -119,12 +119,12 @@ The notebooks expose model, contract, population, simulation and analysis settin
 
 | Notebook | Experiment |
 |---|---|
-| [Pricing_example.ipynb](Pricing_example.ipynb) | Prices and deltas with the four estimators, including variance, standard error and runtime. |
-| [Hedging_example.ipynb](Hedging_example.ipynb) | A configurable insurance portfolio and the three hedging strategies. |
-| [Policyholder_pooling_1_vs_1000.ipynb](Policyholder_pooling_1_vs_1000.ipynb) | The experiment underlying Table 6.2, comparing PE, TI and EI portfolios. |
-| [Policyholder_pooling_1_vs_1000.ipynb](Policyholder_pooling_1_vs_1000.ipynb) | One versus 1,000 policyholders at equal total notional, following Figure 6.1. |
-| [Homogeneous_vs_heterogeneous.ipynb](Homogeneous_vs_heterogeneous.ipynb) | Homogeneous and heterogeneous age groups, following Figure 6.3. |
-| [OU and GeoOU hedging experiments](OU_GeoOU_hedging.ipynb): Calibrate OU and GeoOU carbon models to match the CIR model’s cumulative carbon mean and variance. Compare no hedging, static hedging and dynamic hedging for PE, TI and EI portfolios, with an optional CIR baseline. All inputs are editable; the notebook exports scenario-level CSV data, statistical summaries, calibration diagnostics and figures.
+| [Pricing_example.ipynb](notebook/Pricing_example.ipynb) | Prices and deltas with the four estimators, including variance, standard error and runtime. |
+| [Hedging_example.ipynb](notebook/Hedging_example.ipynb) | A configurable insurance portfolio and the three hedging strategies. |
+| [Policyholder_pooling_1_vs_1000.ipynb](notebook/Policyholder_pooling_1_vs_1000.ipynb) | The experiment underlying Table 6.2, comparing PE, TI and EI portfolios. |
+| [Policyholder_pooling_1_vs_1000.ipynb](notebook/Policyholder_pooling_1_vs_1000.ipynb) | One versus 1,000 policyholders at equal total notional, following Figure 6.1. |
+| [Homogeneous_vs_heterogeneous.ipynb](notebook/Homogeneous_vs_heterogeneous.ipynb) | Homogeneous and heterogeneous age groups, following Figure 6.3. |
+| [OU and GeoOU hedging experiments](notebook/OU_GeoOU_hedging.ipynb): Calibrate OU and GeoOU carbon models to match the CIR model’s cumulative carbon mean and variance. Compare no hedging, static hedging and dynamic hedging for PE, TI and EI portfolios, with an optional CIR baseline. All inputs are editable; the notebook exports scenario-level CSV data, statistical summaries, calibration diagnostics and figures.
 
 The main paper develops the fund construction and hedging framework, with numerical hedging experiments in Section 6. Section E of the supplementary material describes fund simulation and the conditional pricing method. Reproduction requires matching both the model inputs and the numerical settings; the quick-start demos use their own illustrative parameters.
 

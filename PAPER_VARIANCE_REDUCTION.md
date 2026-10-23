@@ -19,7 +19,7 @@ Standard TI/EI pricing simulates a coherent sequential fund path. Standalone PE 
 
 ## Benchmark calibration
 
-The standalone executable `benchmark_petiei_variance_reduction` uses fixed model inputs and exposes numerical budgets through its command line. Use [Pricing_example.ipynb](Pricing_example.ipynb) or the Python configuration interface to choose all model inputs explicitly.
+The standalone executable `benchmark_petiei_variance_reduction` uses fixed model inputs and exposes numerical budgets through its command line. Use [Pricing_example.ipynb](notebook/Pricing_example.ipynb) or the Python configuration interface to choose all model inputs explicitly.
 
 | Input | Benchmark value |
 |---|---|
