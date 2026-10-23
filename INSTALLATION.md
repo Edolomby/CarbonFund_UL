@@ -1,196 +1,142 @@
-# Installation and build
+# Installation
 
-[Back to README](README.md)
+[README](README.md) · [Experiment guide](EXPERIMENTS.md)
 
-These instructions cover dependencies, platform setup, configuration, testing and Release builds. Project commands run from the repository root unless stated otherwise.
+Run project commands from the repository root. The commands below use a Linux shell and an editable Python environment named `.venv-analysis`.
 
 ## Requirements
 
-- A C++20 compiler.
-- CMake 3.22 or newer.
-- A build tool such as Ninja or Make.
-- Git to clone the repository.
-- Eigen 3.4 or newer within the Eigen 3 series.
-- Boost 1.88 or newer; the validated configuration uses Boost 1.90.0.
-- Compiler OpenMP support when `CARBONFUND_ENABLE_OPENMP=ON`, the default.
+| Component | Requirement |
+|---|---|
+| C++ compiler | C++20 support |
+| CMake | 3.22 or newer |
+| Eigen | 3.4 or newer within the Eigen 3 series |
+| Boost | 1.88 or newer; Boost 1.90 is used in the validated configuration |
+| OpenMP | Required when `CARBONFUND_ENABLE_OPENMP=ON` |
+| Python | 3.10 or newer for the experiment interface |
 
-CarbonFund_UL is a header-only library. The Eigen and Boost APIs it currently uses are also header-only, so the application does not link a compiled Boost library.
+The numerical library is header-only. The project consumes Eigen and Boost through their CMake package configurations and uses `Boost::headers`; no separately compiled Boost library is required by the current examples. The configurable runner compiles the Boost.JSON implementation in its own translation unit.
 
-Dependencies are installed system-wide or in an external prefix. CMake uses the installed Eigen and Boost package configurations:
+## Dependencies
 
-```cmake
-find_package(Eigen3 3.4 REQUIRED NO_MODULE)
-find_package(Boost 1.88.0 CONFIG REQUIRED)
-```
-
-Boost installation must provide `BoostConfig.cmake` and its headers package. An unpacked source directory alone is not the installed package expected by this configuration.
-
-## Installation
-
-### Ubuntu / Debian
+On Ubuntu or Debian:
 
 ```bash
-sudo apt update
-sudo apt install build-essential cmake ninja-build git libeigen3-dev libboost-dev
+sudo apt update &&
+sudo apt install build-essential cmake git libeigen3-dev libboost-dev \
+    python3 python3-venv python3-pip
 ```
 
-The available Eigen and Boost packages must meet the minimum versions above. Older distribution releases may supply an older Boost. Configuration reports the Boost version and include directory it actually selects.
-
-The validated Ubuntu 26.04.1 setup uses system Boost 1.90.0 from `/usr/include`.
-
-### macOS
-
-Install Apple's Command Line Tools and [Homebrew](https://brew.sh/), then install the dependencies:
+Distribution package versions vary. The installed Eigen and Boost versions must meet the requirements above. Check the selected Boost headers with:
 
 ```bash
-xcode-select --install
-brew install cmake ninja git gcc@14 eigen@3 boost
+grep -E '^#define BOOST_(VERSION|LIB_VERSION)' /usr/include/boost/version.hpp
+test -f /usr/include/boost/random/xoshiro.hpp
 ```
 
-The macOS configure command below selects Homebrew GCC and locates Eigen and Boost through their installation prefixes.
+CMake reports the Boost version and include directory during configuration. If system packages are too old, install a suitable version in an external prefix and pass that prefix to CMake. An unpacked Boost source directory alone is not equivalent to an installed Boost CMake package.
 
-### Windows
-
-Install [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/) or Visual Studio with **Desktop development with C++**, a Windows SDK and **C++ CMake tools for Windows**. Also install [Git for Windows](https://git-scm.com/downloads/win).
-
-Open **x64 Native Tools Command Prompt**, then run `powershell` inside it. This preserves the MSVC environment for the following commands.
-
-Install Eigen 3.4.0 into an external prefix:
-
-```powershell
-$eigenWork = Join-Path $env:TEMP "carbonfund-eigen"
-$eigenPrefix = Join-Path $env:USERPROFILE "carbonfund-deps/eigen-3.4.0"
-
-New-Item -ItemType Directory -Force -Path $eigenWork | Out-Null
-
-Invoke-WebRequest `
-    -Uri "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip" `
-    -OutFile "$eigenWork/eigen-3.4.0.zip"
-
-Expand-Archive -Force `
-    -Path "$eigenWork/eigen-3.4.0.zip" `
-    -DestinationPath $eigenWork
-
-cmake -S "$eigenWork/eigen-3.4.0" -B "$eigenWork/build" -G Ninja `
-    -DCMAKE_BUILD_TYPE=Release `
-    "-DCMAKE_INSTALL_PREFIX=$eigenPrefix" `
-    -DBUILD_TESTING=OFF `
-    -DEIGEN_BUILD_DOC=OFF `
-    -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-
-cmake --install "$eigenWork/build"
-```
-
-The policy minimum option supports Eigen 3.4.0's older configuration with CMake 4. Older CMake versions may report the option as unused.
-
-Install Boost 1.90.0 into an external prefix, including its CMake package files:
-
-```powershell
-$boostWork = Join-Path $env:TEMP "carbonfund-boost"
-$boostPrefix = Join-Path $env:USERPROFILE "carbonfund-deps/boost-1.90.0"
-$boostArchive = Join-Path $boostWork "boost_1_90_0.zip"
-
-New-Item -ItemType Directory -Force -Path $boostWork | Out-Null
-
-Invoke-WebRequest `
-    -Uri "https://archives.boost.io/release/1.90.0/source/boost_1_90_0.zip" `
-    -OutFile $boostArchive
-
-$expectedHash = "bdc79f179d1a4a60c10fe764172946d0eeafad65e576a8703c4d89d49949973c"
-if ((Get-FileHash $boostArchive -Algorithm SHA256).Hash -ne $expectedHash) {
-    throw "Boost archive checksum verification failed."
-}
-
-Expand-Archive -Force -Path $boostArchive -DestinationPath $boostWork
-
-Push-Location "$boostWork/boost_1_90_0"
-.\bootstrap.bat
-.\b2.exe --with-system install "--prefix=$boostPrefix"
-Pop-Location
-```
-
-The installation tool writes the headers and CMake package metadata. The project consumes `Boost::headers`.
-
-The macOS and Windows procedures still await project build validation on those platforms.
-
-## Obtain the project
+## Obtain the source
 
 ```bash
 git clone https://github.com/Edolomby/CarbonFund_UL.git
 cd CarbonFund_UL
 ```
 
-With GitHub SSH authentication configured:
-
-```bash
-git clone git@github.com:Edolomby/CarbonFund_UL.git
-```
-
-The following build commands run from the repository root.
+For an existing checkout, run the following sections from that directory.
 
 ## Configure, build and test
 
-### Linux: system dependencies
+Use Release mode for simulation timing and hedging experiments:
 
 ```bash
-cmake -S . -B build/debug -G Ninja \
-    -DCMAKE_BUILD_TYPE=Debug \
-    -DBUILD_TESTING=ON
-
-cmake --build build/debug --parallel
-
-ctest --test-dir build/debug --output-on-failure --no-tests=error
-
-./build/debug/check_dependencies
-./build/debug/example_petiei_monte_carlo
-```
-
-To explicitly select system Boost, add `-DBoost_ROOT=/usr` to the configure command.
-
-### macOS
-
-```bash
-cmake -S . -B build/debug -G Ninja \
-    -DCMAKE_BUILD_TYPE=Debug \
-    -DBUILD_TESTING=ON \
-    -DCMAKE_CXX_COMPILER="$(brew --prefix gcc@14)/bin/g++-14" \
-    -DCMAKE_PREFIX_PATH="$(brew --prefix eigen@3);$(brew --prefix boost)"
-
-cmake --build build/debug --parallel
-ctest --test-dir build/debug --output-on-failure --no-tests=error
-./build/debug/example_petiei_monte_carlo
-```
-
-### Windows: PowerShell
-
-```powershell
-$eigenPrefix = Join-Path $env:USERPROFILE "carbonfund-deps/eigen-3.4.0"
-$boostPrefix = Join-Path $env:USERPROFILE "carbonfund-deps/boost-1.90.0"
-
-cmake -S . -B build/debug -G Ninja `
-    -DCMAKE_BUILD_TYPE=Debug `
-    -DBUILD_TESTING=ON `
-    -DCMAKE_CXX_COMPILER=cl `
-    "-DCMAKE_PREFIX_PATH=$eigenPrefix;$boostPrefix"
-
-cmake --build build/debug --parallel
-ctest --test-dir build/debug --output-on-failure --no-tests=error
-.\build\debug\example_petiei_monte_carlo.exe
-```
-
-For dependencies installed elsewhere, use `CMAKE_PREFIX_PATH` with their installation prefixes. `Boost_DIR` can instead name the directory containing `BoostConfig.cmake`.
-
-### Release build for runtime measurements
-
-On Linux, with system dependencies:
-
-```bash
-cmake -S . -B build/release -G Ninja \
+cmake -S . -B build-paper-release \
     -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_TESTING=OFF
-
-cmake --build build/release --parallel
-./build/release/example_petiei_monte_carlo
+    -DCARBONFUND_ENABLE_OPENMP=ON \
+    -DBUILD_TESTING=ON &&
+cmake --build build-paper-release --parallel &&
+ctest --test-dir build-paper-release --output-on-failure --no-tests=error
 ```
 
-Use a separate build directory for a different compiler or generator. `CARBONFUND_ENABLE_OPENMP=OFF` removes the OpenMP dependency. Enabling OpenMP currently makes it available to applications; the inner pricing loop remains serial.
+On Linux, add `-DBoost_ROOT=/usr` to explicitly select the system Boost installation. For dependencies in external prefixes, use:
+
+```bash
+cmake -S . -B build-external \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_PREFIX_PATH="/path/to/eigen-prefix;/path/to/boost-prefix" \
+    -DCARBONFUND_ENABLE_OPENMP=ON \
+    -DBUILD_TESTING=ON
+```
+
+Replace the example prefixes with actual installation directories. `Boost_DIR` can alternatively identify the directory containing `BoostConfig.cmake`. Use a separate build directory when changing compilers or generators.
+
+OpenMP parallelizes independent outer hedging scenarios in `carbonfund_experiment`. It does not parallelize the inner pricing loop. Set `CARBONFUND_ENABLE_OPENMP=OFF` for a serial build; hedging configurations must then request `threads` equal to `0` or `1`.
+
+A Debug build can use a separate directory:
+
+```bash
+cmake -S . -B build-system-boost \
+    -DCMAKE_BUILD_TYPE=Debug \
+    -DCARBONFUND_ENABLE_OPENMP=ON \
+    -DBUILD_TESTING=ON &&
+cmake --build build-system-boost --parallel &&
+ctest --test-dir build-system-boost --output-on-failure --no-tests=error
+```
+
+## Install the Python interface
+
+```bash
+python3 -m venv .venv-analysis &&
+./.venv-analysis/bin/python -m pip install -e .
+```
+
+The package installs NumPy, SciPy and Matplotlib. Python configures experiments and analyses results; the simulation loops remain in C++.
+
+Run the pricing demonstration:
+
+```bash
+./.venv-analysis/bin/python -m carbonfund_experiments \
+    --config experiments/demo_pricing.json \
+    --output results/quickstart_pricing \
+    --binary build-paper-release/carbonfund_experiment
+```
+
+Run the hedging demonstration:
+
+```bash
+./.venv-analysis/bin/python -m carbonfund_experiments \
+    --config experiments/demo_hedging.json \
+    --output results/quickstart_hedging \
+    --binary build-paper-release/carbonfund_experiment
+```
+
+Use a new output directory for another run, or explicitly pass `--overwrite`. See [EXPERIMENTS.md](EXPERIMENTS.md) for inputs, statistics and output files.
+
+## Notebook kernel
+
+Install a kernel in the same environment:
+
+```bash
+./.venv-analysis/bin/python -m pip install ipykernel
+```
+
+In VS Code, open the project folder, open a notebook, select **Select Kernel → Python Environments**, and choose `.venv-analysis/bin/python`. The notebook setup cell prints the selected Python executable and the C++ backend path.
+
+To use JupyterLab instead:
+
+```bash
+./.venv-analysis/bin/python -m pip install jupyterlab &&
+./.venv-analysis/bin/python -m jupyterlab
+```
+
+Start Jupyter from the repository root or a subdirectory. The notebooks locate the repository by its `include/carbonfund/` and `python/carbonfund_experiments.py` paths. The research notebooks expose large simulation budgets; use smaller explicitly chosen budgets for a first workflow check.
+
+## Build diagnostics
+
+- **Boost not found or too old:** inspect the configure output and select the intended installed prefix. Use a fresh build directory if the cache retains an old dependency path.
+- **Benchmark source not found:** the benchmark sources belong in `benchmarks/`, and their `add_executable` paths must refer there.
+- **TablePrinter header not found:** the header belongs at `include/carbonfund/utils/TablePrinter.hpp`; example sources include `<carbonfund/utils/TablePrinter.hpp>`.
+- **Backend executable not found:** build the `carbonfund_experiment` target and pass its path with `--binary` if it is outside the standard build directories.
+- **Only one outer worker:** enable OpenMP, rebuild the runner and inspect `metadata.json` fields `run.openmp_enabled` and `run.threads_used`. Python does not manage the worker threads.
+
+The documented execution workflow has been exercised with Linux/GCC. macOS and Windows builds require platform-appropriate dependencies and compiler settings and have not been validated here. Windows also uses `.exe` executables and `.venv-analysis/Scripts/python.exe` for its virtual environment.
