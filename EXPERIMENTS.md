@@ -71,7 +71,7 @@ PE pays on survival to maturity; TI pays on death before maturity. EI combines t
 The Gompertz-Makeham hazard for initial age `a` is
 
 $$
-\mu(a+t)=\xi+\frac{1}{b}\exp\!\left(\frac{a+t-m}{b}\right).
+\mu(a+t)=\xi+\frac{1}{b}\exp\left(\frac{a+t-m}{b}\right).
 $$
 
 `mortality` contains `xi >= 0`, finite `m` and `b > 0`. Paper-calibrated experiments use `xi = 0.0041959`, `m = 79.6921211` and `b = 11.5818911`.
